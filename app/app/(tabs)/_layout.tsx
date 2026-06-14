@@ -6,7 +6,9 @@ import { HomeIcon, DayIcon, WeekIcon, InsightsIcon, SettingsIcon, NumberIcon } f
 import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
-import { reconcileLiveActivities } from '../../src/lib/liveActivity'
+import * as calendarBlocksService from '../../src/services/calendar-blocks'
+import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
+import { todayStr } from '../../src/lib/date'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
 import { toLocalDateStr } from '../../src/lib/date'
@@ -18,10 +20,20 @@ export default function TabLayout() {
   const router = useRouter()
   const { colors, showWeekTab } = useSettings()
   const [categories, setCategories] = useState<Category[]>([])
+  const [nextPlanned, setNextPlanned] = useState<NextPlanned | null>(null)
   const [stoppingEntryId, setStoppingEntryId] = useState<string | null>(null)
 
   useFocusEffect(useCallback(() => {
     categoriesService.getCategories().then(setCategories).catch(() => {})
+    calendarBlocksService.getEffectiveBlocksForDate(todayStr())
+      .then((blocks) => {
+        const nowMs = Date.now()
+        const next = blocks
+          .filter((b) => new Date(b.start_time).getTime() > nowMs)
+          .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
+        setNextPlanned(next ? { title: next.title, startMs: new Date(next.start_time).getTime() } : null)
+      })
+      .catch(() => {})
     timer.refresh()
   }, [timer.refresh]))
 
@@ -32,10 +44,8 @@ export default function TabLayout() {
   // Sync running timers -> iOS Live Activities (Dynamic Island + Lock Screen).
   // Single instance: this tab root mounts once.
   useEffect(() => {
-    const nameById: Record<string, string> = {}
-    for (const c of categories) nameById[c.id] = c.name
-    reconcileLiveActivities(timer.running, nameById).catch(() => {})
-  }, [timer.running, categories])
+    reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
+  }, [timer.running, nextPlanned])
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)
