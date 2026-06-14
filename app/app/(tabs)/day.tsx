@@ -706,6 +706,20 @@ export default function DayScreen() {
     return overlapsRunning ? RIGHT_HALF_LANE : FULL_LANE
   }, [actualEntries, visibleBlocks, timer.running, now])
 
+  // Precompute lanes once per data change (NOT per zoom frame). The overlap
+  // calc is O(n^2) and zoom-independent, so caching it keeps pinch-zoom smooth.
+  const blockLanes = useMemo(() => {
+    const m = new Map<string, TimelineLane>()
+    for (const b of visibleBlocks) m.set(`${b.id}:${b.date}`, getBlockLane(b))
+    return m
+  }, [visibleBlocks, getBlockLane])
+
+  const entryLanes = useMemo(() => {
+    const m = new Map<string, TimelineLane>()
+    for (const e of actualEntries) m.set(e.id, getActualEntryLane(e))
+    return m
+  }, [actualEntries, getActualEntryLane])
+
   const openNewTimerSheet = useCallback(() => {
     setEntrySheetRange(null)
     setEntrySheetDate(dateStr)
@@ -1038,7 +1052,7 @@ export default function DayScreen() {
               const cat = categories.find(c => c.id === block.category_id)
               const catColor = cat?.color ?? tc.text3
               const renderId = `${block.id}:${block.date}`
-              const lane = getBlockLane(block)
+              const lane = blockLanes.get(renderId) ?? FULL_LANE
               // Use the original (pre-clamp) start_time for the label so the
               // plan times stay fixed even after the now-line cuts into the block.
               const origStartTime = blocks.find(b => b.id === block.id)?.start_time ?? block.start_time
@@ -1075,7 +1089,7 @@ export default function DayScreen() {
               const cat = categories.find(c => c.id === entry.category_id)
               const catColor = cat?.color ?? tc.text3
               const endTime = entry.end_time ?? now.toISOString()
-              const lane = getActualEntryLane(entry)
+              const lane = entryLanes.get(entry.id) ?? FULL_LANE
               return (
                 <DraggableItem
                   key={entry.id}
