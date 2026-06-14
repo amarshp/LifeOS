@@ -189,6 +189,7 @@ interface DraggableItemProps {
   plannedColor?: string
   isDragging: boolean
   dragOffset: number
+  scrollY: Animated.Value
   hourToPx: (time: string) => number
   onTap: (id: string) => void
   onDragStart: (id: string) => void
@@ -202,7 +203,7 @@ function DraggableItem({
   id, startTime, endTime, title,
   bgColor, titleColor, subColor, subText, tagsText,
   plannedColor,
-  isDragging, dragOffset,
+  isDragging, dragOffset, scrollY,
   hourToPx,
   onTap, onDragStart, onDragUpdate, onDragEnd,
   colLeft = 0, colRight = 0,
@@ -244,6 +245,16 @@ function DraggableItem({
   const showTags = drawnHeight >= 50 && !!tagsText
   const tight = drawnHeight < 30
 
+  // Sticky title: as the timeline scrolls through a tall block, keep its title
+  // pinned to the top of the viewport until the block's bottom pushes it off.
+  const STICKY_TITLE_H = 16
+  const maxShift = Math.max(1, drawnHeight - 8 - STICKY_TITLE_H)
+  const stickyY = scrollY.interpolate({
+    inputRange: [baseTop, baseTop + maxShift],
+    outputRange: [0, maxShift],
+    extrapolate: 'clamp',
+  })
+
   return (
     <GestureDetector gesture={gesture}>
       <View style={[styles.block, {
@@ -264,22 +275,39 @@ function DraggableItem({
         shadowRadius: isDragging ? 12 : 0,
         elevation: isDragging ? 12 : 0,
       }]}>
-        <Text
-          style={[styles.blockTitle, { color: plannedColor ?? titleColor }, tight && { fontSize: 10, lineHeight: 12 }]}
-          numberOfLines={1}
-        >
-          {title}
-        </Text>
-        {showSub ? (
-          <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]} numberOfLines={1}>
-            {subText}
+        {tight ? (
+          <Text
+            style={[styles.blockTitle, { color: plannedColor ?? titleColor }, { fontSize: 10, lineHeight: 12 }]}
+            numberOfLines={1}
+          >
+            {title}
           </Text>
-        ) : null}
-        {showTags ? (
-          <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]} numberOfLines={1}>
-            {tagsText}
-          </Text>
-        ) : null}
+        ) : (
+          <>
+            {(showSub || showTags) ? (
+              <View style={{ paddingTop: STICKY_TITLE_H }}>
+                {showSub ? (
+                  <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]} numberOfLines={1}>
+                    {subText}
+                  </Text>
+                ) : null}
+                {showTags ? (
+                  <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]} numberOfLines={1}>
+                    {tagsText}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            <Animated.View
+              pointerEvents="none"
+              style={{ position: 'absolute', top: 4, left: 9, right: 9, transform: [{ translateY: stickyY }] }}
+            >
+              <Text style={[styles.blockTitle, { color: plannedColor ?? titleColor }]} numberOfLines={1}>
+                {title}
+              </Text>
+            </Animated.View>
+          </>
+        )}
       </View>
     </GestureDetector>
   )
@@ -330,6 +358,8 @@ export default function DayScreen() {
   // Live pinch scale runs on the native thread (no per-frame React relayout);
   // the real zoom is committed once on gesture end.
   const pinchScale = useRef(new Animated.Value(1)).current
+  // Native-thread scroll offset — drives sticky block titles without re-renders.
+  const scrollYAnim = useRef(new Animated.Value(0)).current
   const pendingScrollAfterZoomRef = useRef<number | null>(null)
   const pendingPrependPxRef = useRef(0)
   const pendingScrollTargetRef = useRef<ScrollTarget | null>(null)
@@ -965,15 +995,16 @@ export default function DayScreen() {
       {/* Timeline */}
       <GestureDetector gesture={pinchGesture}>
       <View style={{ flex: 1 }}>
-      <ScrollView
+      <Animated.ScrollView
         ref={scrollRef}
         style={[styles.scroll, { backgroundColor: tc.bg }]}
         scrollEnabled={draggingId === null}
         bounces={false}
         overScrollMode="never"
-        onScroll={(e) => {
-          handleTimelineScroll(e.nativeEvent.contentOffset.y)
-        }}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollYAnim } } }],
+          { useNativeDriver: true, listener: (e: { nativeEvent: { contentOffset: { y: number } } }) => handleTimelineScroll(e.nativeEvent.contentOffset.y) }
+        )}
         scrollEventThrottle={8}
         onLayout={(e) => { viewportHRef.current = e.nativeEvent.layout.height }}
       >
@@ -1058,6 +1089,7 @@ export default function DayScreen() {
                   plannedColor={catColor}
                   isDragging={draggingId === block.id}
                   dragOffset={dragOffset}
+                  scrollY={scrollYAnim}
                   hourToPx={hourToPx}
                   onTap={handleBlockTap}
                   onDragStart={handleDragStart}
@@ -1088,6 +1120,7 @@ export default function DayScreen() {
                   subText={`${formatTime(entry.start_time)} → ${formatTime(endTime)}`}
                   isDragging={draggingId === entry.id}
                   dragOffset={dragOffset}
+                  scrollY={scrollYAnim}
                   hourToPx={hourToPx}
                   onTap={handleEntryTap}
                   onDragStart={handleDragStart}
@@ -1182,7 +1215,7 @@ export default function DayScreen() {
           </GestureDetector>
         </View>
         </Animated.View>
-      </ScrollView>
+      </Animated.ScrollView>
       </View>
       </GestureDetector>
 
