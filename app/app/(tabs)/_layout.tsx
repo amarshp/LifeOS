@@ -7,7 +7,6 @@ import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
 import { reconcileLiveActivities } from '../../src/lib/liveActivity'
-import * as Linking from 'expo-linking'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
 import { toLocalDateStr } from '../../src/lib/date'
@@ -97,22 +96,6 @@ export default function TabLayout() {
       setStoppingEntryId(null)
     }
   }, [openStartTimerSheet, stoppingEntryId, timer])
-
-  // Handle the Live Activity STOP button deep link: lifeos://stop-start?entry=ID
-  useEffect(() => {
-    const handle = (url: string | null) => {
-      if (!url) return
-      const parsed = Linking.parse(url)
-      const isStopStart = parsed.hostname === 'stop-start' || parsed.path === 'stop-start'
-      const entry = parsed.queryParams?.entry
-      if (isStopStart && typeof entry === 'string') {
-        void stopAndOpenStartTimer(entry)
-      }
-    }
-    Linking.getInitialURL().then(handle).catch(() => {})
-    const sub = Linking.addEventListener('url', (e) => handle(e.url))
-    return () => sub.remove()
-  }, [stopAndOpenStartTimer])
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: colors.bg }}>
