@@ -107,9 +107,10 @@
 - iOS 16.2+ only; no-op on Android/web
 
 ## Siri / Voice (iOS)
-- "Track \<task> in LifeOS" (stop current, start), "Track parallel \<task> in LifeOS", "Track stop \<task> in LifeOS" — run while locked, no unlock
-- Task name matches your categories + recent task titles (synced to a native AppEntity); arbitrary free text isn't supported (Apple requires a known entity)
-- Commands are captured to a queue while locked and applied (backdated to when spoken, auto `review` tag) when the app is next opened; Siri speaks a confirmation
+- One-shot: "LifeOS \<title>" captures the whole tail as the entry title (e.g. "LifeOS commute to office"); "LifeOS stop \<title>" / "LifeOS parallel \<title>" route by leading keyword — best for short, non-navigation-like words (Apple's NL router hijacks map/web/message-like phrases)
+- Reliable two-step fallback: "New entry in LifeOS" → Siri asks "What are you tracking?" → dictate anything (captured as a parameter answer, immune to Siri domain routing)
+- start / stop / parallel are parsed from the spoken title in JS (`siriQueue.ts`) so routing keywords are tunable without a native rebuild
+- Commands run while locked, captured to a queue, applied on next foreground (backdated to when spoken, auto `review` tag); a valid category is resolved in-app (falls back to Misc/first) and the new entry shows immediately via a timer-change broadcast
 - Implemented via App Intents in the main target (config plugin `plugins/withTrackIntent.js` + `LifeOSTrackIntent.swift`)
 
 ## Auth

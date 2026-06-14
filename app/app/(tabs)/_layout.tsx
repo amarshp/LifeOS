@@ -10,6 +10,7 @@ import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
 import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
+import { emitTimerChange } from '../../src/lib/timer-events'
 import { todayStr } from '../../src/lib/date'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
@@ -24,6 +25,23 @@ export default function TabLayout() {
   const [categories, setCategories] = useState<Category[]>([])
   const [nextPlanned, setNextPlanned] = useState<NextPlanned | null>(null)
   const [stoppingEntryId, setStoppingEntryId] = useState<string | null>(null)
+
+  // Drain queued Siri commands and surface failures (temporary diagnostic Alert
+  // so we can see why a "LifeOS …"/"New entry" command didn't land).
+  const drainAndReport = useCallback(async () => {
+    try {
+      const r = await drainTrackQueue()
+      if (r.applied > 0) {
+        timer.refresh()
+        emitTimerChange() // make Day/Insights reload the new Siri entry immediately
+      }
+      if (r.errors.length > 0) {
+        Alert.alert('Siri sync', r.errors.join('\n'))
+      }
+    } catch (e) {
+      Alert.alert('Siri sync error', e instanceof Error ? e.message : String(e))
+    }
+  }, [timer.refresh])
 
   useFocusEffect(useCallback(() => {
     Promise.all([
@@ -45,11 +63,9 @@ export default function TabLayout() {
       })
       .catch(() => {})
     // Apply any Siri "track" commands captured while locked.
-    drainTrackQueue()
-      .then((n) => { if (n > 0) timer.refresh() })
-      .catch(() => {})
+    void drainAndReport()
     timer.refresh()
-  }, [timer.refresh]))
+  }, [timer.refresh, drainAndReport]))
 
   const currentEntry = timer.running[0]
   const currentCat = currentEntry ? categories.find(c => c.id === currentEntry.category_id) : undefined
@@ -66,11 +82,11 @@ export default function TabLayout() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        drainTrackQueue().then((n) => { if (n > 0) timer.refresh() }).catch(() => {})
+        void drainAndReport()
       }
     })
     return () => sub.remove()
-  }, [timer.refresh])
+  }, [drainAndReport])
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)

@@ -1,6 +1,7 @@
 import { File, Paths } from 'expo-file-system'
 import type { Category, TimeEntry } from '../types/database'
 import * as timeEntries from '../services/time-entries'
+import * as categoriesService from '../services/categories'
 
 // Bridge for the native Siri "track" intents (LifeOSTrackIntent.swift).
 // - syncQuickTasks: write the task options the AppEntity offers to Siri.
@@ -79,14 +80,14 @@ function readQueue(): TrackCommand[] {
   }
 }
 
-async function applyCommand(cmd: TrackCommand, running: TimeEntry[]): Promise<void> {
+async function applyCommand(cmd: TrackCommand, running: TimeEntry[], categoryId: string): Promise<void> {
   const at = new Date(cmd.at).toISOString()
   const { action, title } = parseTrack(cmd.title)
 
   if (action === 'stop') {
     const match =
       running.find((r) => r.title.toLowerCase() === title.toLowerCase()) ??
-      running.find((r) => r.category_id === cmd.categoryId) ??
+      running.find((r) => r.category_id === categoryId) ??
       (title.length === 0 ? running[0] : undefined) // bare "stop" → stop current
     if (match) await timeEntries.updateEntry(match.id, { is_running: false, end_time: at })
     return
@@ -101,7 +102,7 @@ async function applyCommand(cmd: TrackCommand, running: TimeEntry[]): Promise<vo
 
   // start + parallel both insert a new running entry (DB trigger caps at 2)
   await timeEntries.startTimer({
-    category_id: cmd.categoryId,
+    category_id: categoryId,
     title,
     start_time: at,
     tags: [REVIEW_TAG],
@@ -109,21 +110,37 @@ async function applyCommand(cmd: TrackCommand, running: TimeEntry[]): Promise<vo
   })
 }
 
-// Returns how many commands were applied (0 = nothing to do).
-export async function drainTrackQueue(): Promise<number> {
+export interface DrainResult {
+  found: number
+  applied: number
+  errors: string[]
+}
+
+// Apply queued Siri commands. Resolves a valid category in JS (the native side
+// may write an empty/stale id), and reports errors instead of swallowing them.
+export async function drainTrackQueue(): Promise<DrainResult> {
   const queue = readQueue()
-  if (queue.length === 0) return 0
+  if (queue.length === 0) return { found: 0, applied: 0, errors: [] }
 
   // chronological, so sequential start/stop ordering is correct
   queue.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 
+  const categories = await categoriesService.getCategories().catch(() => [] as Category[])
+  const fallbackCat =
+    categories.find((c) => ['misc', 'inbox', 'other'].includes(c.name.toLowerCase())) ?? categories[0]
+
+  let applied = 0
+  const errors: string[] = []
   for (const cmd of queue) {
     try {
       const running = await timeEntries.getRunningTimers()
-      await applyCommand(cmd, running)
-    } catch {
-      // skip a bad command (e.g. max-2-parallel trigger); keep going
+      const categoryId = categories.some((c) => c.id === cmd.categoryId) ? cmd.categoryId : fallbackCat?.id
+      if (!categoryId) throw new Error('no category available')
+      await applyCommand(cmd, running, categoryId)
+      applied += 1
+    } catch (e) {
+      errors.push(`"${cmd.title}": ${e instanceof Error ? e.message : String(e)}`)
     }
   }
-  return queue.length
+  return { found: queue.length, applied, errors }
 }
