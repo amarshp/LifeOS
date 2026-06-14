@@ -236,13 +236,23 @@ function DraggableItem({
   if (height <= 0) return null
   const top = isDragging ? baseTop + dragOffset : baseTop
 
+  // Height-aware content: a short block clips 3 lines so text "vanishes".
+  // Show only what fits — title, then sub, then tags — and tighten when small
+  // so the title stays readable down to ~16px.
+  const drawnHeight = Math.max(height, 16)
+  const showSub = drawnHeight >= 34
+  const showTags = drawnHeight >= 50 && !!tagsText
+  const tight = drawnHeight < 30
+
   return (
     <GestureDetector gesture={gesture}>
       <View style={[styles.block, {
         top,
-        height: Math.max(height, 20),
+        height: drawnHeight,
         left: colLeft,
         right: colRight,
+        paddingVertical: tight ? 1 : 4,
+        justifyContent: tight ? 'center' : 'flex-start',
         backgroundColor: plannedColor ? 'transparent' : bgColor,
         borderWidth: plannedColor ? 1.5 : 0,
         borderColor: plannedColor ?? undefined,
@@ -254,12 +264,19 @@ function DraggableItem({
         shadowRadius: isDragging ? 12 : 0,
         elevation: isDragging ? 12 : 0,
       }]}>
-        <Text style={[styles.blockTitle, { color: plannedColor ?? titleColor }]} numberOfLines={1}>{title}</Text>
-        <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]}>
-          {subText}
+        <Text
+          style={[styles.blockTitle, { color: plannedColor ?? titleColor }, tight && { fontSize: 10, lineHeight: 12 }]}
+          numberOfLines={1}
+        >
+          {title}
         </Text>
-        {tagsText ? (
-          <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]}>
+        {showSub ? (
+          <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]} numberOfLines={1}>
+            {subText}
+          </Text>
+        ) : null}
+        {showTags ? (
+          <Text style={[styles.blockSub, { color: plannedColor ? plannedColor + 'AA' : subColor }]} numberOfLines={1}>
             {tagsText}
           </Text>
         ) : null}

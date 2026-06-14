@@ -121,14 +121,9 @@ export default function WeekScreen() {
   const timer = useTimer()
   const now = useNow()
   const scrollRef = useRef<ScrollView>(null)
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [dayOffset, setDayOffset] = useState(() => {
-    const todayWeekDates = getWeekDates(new Date(), weekStartsOn)
-    const todayStr = toLocalDateStr(new Date())
-    const todayIdx = todayWeekDates.findIndex(d => toLocalDateStr(d) === todayStr)
-    // center today in the 3-column view (slot 1); clamp to valid range 0-4
-    return Math.max(0, Math.min(4, todayIdx - 1))
-  })
+  // Days from today for the CENTER column. 0 = today centered. The 3 visible
+  // columns are [center-1, center, center+1] and step continuously by 1 day.
+  const [centerOffset, setCenterOffset] = useState(0)
   const [categories, setCategories] = useState<Category[]>([])
   const [weekBlocks, setWeekBlocks] = useState<CalendarBlock[]>([])
   const [weekEntries, setWeekEntries] = useState<TimeEntry[]>([])
@@ -199,17 +194,20 @@ export default function WeekScreen() {
   }, [zoom])
 
   const today = now
-  const refDate = new Date(today)
-  refDate.setDate(today.getDate() + weekOffset * 7)
-  const weekDates = getWeekDates(refDate, weekStartsOn)
+  const centerDate = new Date(today)
+  centerDate.setDate(today.getDate() + centerOffset)
+  const visibleDates = [-1, 0, 1].map((d) => {
+    const x = new Date(centerDate)
+    x.setDate(centerDate.getDate() + d)
+    return x
+  })
+  const weekDates = getWeekDates(centerDate, weekStartsOn) // header range + week number
 
-  const startDate = toLocalDateStr(weekDates[0])
-  const endDate = toLocalDateStr(weekDates[6])
+  const startDate = toLocalDateStr(visibleDates[0])
+  const endDate = toLocalDateStr(visibleDates[2])
   const todayStr = toLocalDateStr(today)
-  const weekNum = getWeekNumber(weekDates[0])
+  const weekNum = getWeekNumber(centerDate)
 
-  const visibleStart = Math.max(0, Math.min(4, dayOffset))
-  const visibleDates = weekDates.slice(visibleStart, visibleStart + 3)
   const visibleWeekBlocks = useMemo(() => getVisiblePlannedBlocks(weekBlocks, now), [weekBlocks, now])
 
   const loadData = useCallback(async () => {
@@ -257,16 +255,7 @@ export default function WeekScreen() {
   rightNavDate.setDate(rightNavDate.getDate() + 1)
 
   function navigateDay(delta: number) {
-    const next = dayOffset + delta
-    if (next < 0) {
-      setWeekOffset(o => o - 1)
-      setDayOffset(4)
-    } else if (next > 4) {
-      setWeekOffset(o => o + 1)
-      setDayOffset(0)
-    } else {
-      setDayOffset(next)
-    }
+    setCenterOffset((o) => o + delta)
   }
 
   const swipeGesture = useMemo(() => {
@@ -282,7 +271,7 @@ export default function WeekScreen() {
         if (!isSwipe) return
         navigateDay(distance < 0 ? 1 : -1)
       })
-  }, [dayOffset])
+  }, [])
 
   return (
     <GestureDetector gesture={swipeGesture}>
