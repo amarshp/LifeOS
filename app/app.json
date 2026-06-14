@@ -28,6 +28,13 @@
       "expo-router",
       "expo-secure-store",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8ffed5ea-3f24-4990-95a4-a5c26c4705ec"
+      }
+    },
+    "owner": "amarshp"
   }
 }
