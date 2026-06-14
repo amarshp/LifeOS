@@ -1,0 +1,522 @@
+/* ===== LifeOS — Premium Minimalist ===== */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* light surfaces — warm paper */
+  --bg:           #F5F2EC;
+  --surface-1:    #FFFFFF;
+  --surface-2:    #FAF8F2;
+  --surface-3:    #F0EDE5;
+  --hairline:     #E4DFD4;
+  --hairline-2:   #D8D2C4;
+
+  /* ink */
+  --ink:          #0A0908;
+  --ink-2:        #3F3C36;
+  --ink-3:        #7A766C;
+  --ink-4:        #B8B3A7;
+  --ink-5:        #D8D3C5;
+
+  /* chalk pastel categories */
+  --c-deep:    #B5AAC2;
+  --c-study:   #CCBADD;
+  --c-admin:   #E7D0A2;
+  --c-gym:     #AFC8AC;
+  --c-break:   #D2CFC5;
+  --c-commute: #C4B3A4;
+
+  /* fonts — Playfair for bold luxury display, Inter body, mono numerals */
+  --font-display: 'Playfair Display', 'Times New Roman', serif;
+  --font-ui:      'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* ─── Dark theme — applied via .hi-phone.dark ──────────────── */
+.hi-phone.dark {
+  --bg:           #0E0C0A;
+  --surface-1:    #1A1814;
+  --surface-2:    #16140F;
+  --surface-3:    #221F18;
+  --hairline:     #2A251E;
+  --hairline-2:   #3A352D;
+
+  --ink:          #F5F2EC;
+  --ink-2:        #C8C2B3;
+  --ink-3:        #8A8478;
+  --ink-4:        #5A5448;
+  --ink-5:        #3A352D;
+
+  /* pastels slightly muted for dark */
+  --c-deep:    #A99BC0;
+  --c-study:   #C2AEDA;
+  --c-admin:   #E5CC98;
+  --c-gym:     #A5C2A3;
+  --c-break:   #C9C5B9;
+  --c-commute: #BBA999;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  background: #d6d2c6;          /* slightly darker so the phone stands out */
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+/* ─── Phone shell ─────────────────────────────────────────── */
+.hi-phone {
+  width: 360px;
+  height: 780px;
+  background: var(--bg);
+  color: var(--ink);
+  border-radius: 38px;
+  position: relative;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+}
+.hi-phone .screen {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-top: 18px;
+  min-height: 0;
+}
+
+/* ─── Status bar ──────────────────────────────────────────── */
+.hi-statusbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 24px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  letter-spacing: -0.01em;
+}
+.hi-statusbar .glyphs { display: flex; gap: 6px; align-items: center; }
+
+/* ─── Editorial typography — Playfair Display, weighty luxury ──── */
+.hi-display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+.hi-h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 0.95;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+}
+.hi-h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.hi-h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.hi-eyebrow {
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.hi-num {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 500;
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.hi-meta { color: var(--ink-2); font-size: 12.5px; font-weight: 400; }
+.hi-meta-sm { color: var(--ink-3); font-size: 11.5px; }
+
+/* ─── Rules ───────────────────────────────────────────────── */
+.hi-rule    { border:0; border-top: 1px solid var(--hairline); margin: 0; }
+.hi-rule-2  { border:0; border-top: 1px solid var(--ink-5);   margin: 0; }
+
+/* ─── Card — barely-there ─────────────────────────────────── */
+.hi-card {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.hi-card-soft {
+  background: var(--surface-2);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+/* ─── Buttons ─────────────────────────────────────────────── */
+.hi-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--hairline-2);
+  cursor: pointer;
+}
+.hi-btn-primary {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+.hi-btn-ghost   { background: transparent; border-color: transparent; color: var(--ink-2); }
+.hi-btn-danger  { background: transparent; border-color: var(--hairline-2); color: #B47568; }
+
+/* ─── Chip / Tag ──────────────────────────────────────────── */
+.hi-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+.hi-chip.selected {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.hi-chip .swatch { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--ink)); }
+
+.hi-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 0;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+.hi-tag::before { content: "·"; color: var(--ink-4); margin-right: 2px; }
+.hi-tag:first-child::before { content: ""; margin: 0; }
+.hi-tag .x { color: var(--ink-4); font-weight: 300; }
+
+/* ─── Categories ──────────────────────────────────────────── */
+.cat-deep    { --c: var(--c-deep); }
+.cat-study   { --c: var(--c-study); }
+.cat-admin   { --c: var(--c-admin); }
+.cat-gym     { --c: var(--c-gym); }
+.cat-break   { --c: var(--c-break); }
+.cat-commute { --c: var(--c-commute); }
+
+/* ─── Block — minimal, ink for actual, chalk wash for planned ── */
+.hi-block {
+  position: absolute;
+  border-radius: 4px;
+  padding: 6px 9px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  color: var(--ink);
+}
+.hi-block .title {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.hi-block .sub {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin-top: 1px;
+  font-feature-settings: "tnum";
+  letter-spacing: 0.01em;
+  font-weight: 400;
+}
+
+/* ACTUAL — solid chalk pastel fill */
+.hi-block.actual {
+  background: var(--c);
+  color: var(--ink);
+}
+.hi-block.actual .title { color: var(--ink); }
+.hi-block.actual .sub   { color: color-mix(in oklab, var(--ink) 60%, var(--c)); }
+
+/* PLANNED — a delicate wash, just a tint of the color over paper */
+.hi-block.planned {
+  background: color-mix(in oklab, var(--c) 32%, var(--bg));
+  color: var(--ink-2);
+}
+.hi-block.planned .title { color: color-mix(in oklab, var(--ink) 80%, var(--c) 60%); font-weight: 500; }
+.hi-block.planned .sub   { color: var(--ink-3); }
+
+/* running = same as actual */
+.hi-block.running { background: var(--c); }
+
+/* now line — minimal black hairline with a dot */
+.hi-now-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 0;
+  border-top: 1px solid var(--ink);
+  z-index: 4;
+  pointer-events: none;
+}
+.hi-now-line::before {
+  content: "";
+  position: absolute;
+  left: -3px; top: -3px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* hour ticks */
+.hi-tick {
+  position: absolute;
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--ink-4);
+  letter-spacing: 0.04em;
+  font-feature-settings: "tnum";
+}
+
+/* ─── Tab bar ─────────────────────────────────────────────── */
+.hi-tabbar {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg);
+  padding: 8px 0 22px;
+}
+.hi-tabbar .tab {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 4px 4px;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  cursor: pointer;
+}
+.hi-tabbar .tab.active { color: var(--ink); }
+.hi-tabbar .tab .icon {
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ─── FABs ────────────────────────────────────────────────── */
+.hi-fab {
+  position: absolute;
+  right: 18px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 5;
+  width: 46px; height: 46px;
+}
+.hi-fab.primary {
+  bottom: 96px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 18px;
+  padding-left: 3px;
+}
+.hi-fab.secondary {
+  bottom: 152px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  font-size: 22px;
+  font-weight: 200;
+}
+
+/* ─── Runner banner — almost invisible ────────────────────── */
+.hi-runner {
+  margin: 14px 22px 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: 10px;
+}
+.hi-runner .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--c, var(--ink));
+}
+.hi-runner .name {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.hi-runner .meta {
+  color: var(--ink-3); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.hi-runner .timer {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink);
+}
+.hi-runner .stop {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: transparent; border: 1px solid var(--ink-4);
+  display: flex; align-items: center; justify-content: center;
+}
+.hi-runner .stop::before {
+  content: ""; width: 6px; height: 6px; background: var(--ink); border-radius: 1px;
+}
+
+/* ─── Inputs ──────────────────────────────────────────────── */
+.hi-input {
+  width: 100%;
+  padding: 12px 0 14px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-2);
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 22px;
+  color: var(--ink);
+  outline: none;
+  letter-spacing: -0.015em;
+}
+.hi-input::placeholder { color: var(--ink-4); }
+
+.hi-time-pill {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--hairline-2);
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-feature-settings: "tnum";
+}
+.hi-time-pill .pencil { color: var(--ink-4); font-size: 11px; }
+
+/* ─── Sheet ───────────────────────────────────────────────── */
+.hi-scrim { position: absolute; inset: 0; background: rgba(10,9,8,0.18); backdrop-filter: blur(2px); }
+.hi-sheet {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--hairline);
+  border-radius: 28px 28px 0 0;
+  padding: 8px 24px 26px;
+  z-index: 6;
+}
+.hi-sheet .handle {
+  width: 36px; height: 3px;
+  background: var(--ink-5);
+  border-radius: 2px;
+  margin: 6px auto 16px;
+}
+
+/* ─── Dropdown ────────────────────────────────────────────── */
+.hi-dropdown {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+}
+.hi-dropdown .row {
+  padding: 10px 0;
+  font-size: 13px;
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-2);
+}
+.hi-dropdown .row.hover { color: var(--ink); }
+.hi-dropdown .row .ct  { color: var(--ink-4); font-size: 11px; letter-spacing: 0.04em; }
+
+/* ─── Popover ─────────────────────────────────────────────── */
+.hi-popover {
+  position: absolute;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 20px 40px -16px rgba(10,9,8,0.18);
+  z-index: 5;
+}
+
+/* ─── Freq pill ───────────────────────────────────────────── */
+.hi-freq {
+  display: inline-flex; align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+.hi-freq.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* ─── Category swatch ─────────────────────────────────────── */
+.hi-swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.hi-swatch-lg { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+
+/* ─── Mini timeline strip ─────────────────────────────────── */
+.hi-mini-rail {
+  position: relative;
+  height: 22px;
+  background: transparent;
+  border-bottom: 1px solid var(--hairline);
+}
+.hi-mini-rail .blk {
+  position: absolute;
+  top: 4px; bottom: 4px;
+  border-radius: 2px;
+}
+.hi-mini-rail .blk.actual,
+.hi-mini-rail .blk.running { background: var(--c); }
+.hi-mini-rail .blk.planned {
+  background: color-mix(in oklab, var(--c) 32%, var(--bg));
+}
+.hi-mini-rail .now {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px; background: var(--ink);
+}
+.hi-mini-rail .now::before {
+  content: ""; position: absolute;
+  top: -3px; left: -3px; width: 7px; height: 7px;
+  background: var(--ink); border-radius: 50%;
+}
+
+/* ─── Canvas behind everything ────────────────────────────── */
+.dc-canvas, [class*="dc-"] { background-color: #c8c2b3; }

@@ -1,0 +1,484 @@
+/* LifeOS wireframe — hand-drawn napkin sketch */
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Kalam:wght@300;400;700&family=Patrick+Hand&display=swap');
+
+:root {
+  --paper: #f7f3e8;
+  --paper-shade: #ede7d3;
+  --ink: #1a1a1a;
+  --ink-soft: #3a3a3a;
+  --ink-faint: #888070;
+  --hand: 'Caveat', cursive;
+  --body: 'Kalam', cursive;
+  --label: 'Patrick Hand', cursive;
+}
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+}
+
+/* Hand-drawn phone */
+.phone {
+  position: relative;
+  width: 340px;
+  height: 700px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 38px;
+  padding: 18px 14px 14px;
+  box-sizing: border-box;
+  filter: url(#wobble-light);
+  box-shadow: 4px 5px 0 rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+.phone::before {
+  /* notch */
+  content: "";
+  position: absolute;
+  top: 8px; left: 50%;
+  transform: translateX(-50%);
+  width: 90px; height: 14px;
+  background: var(--ink);
+  border-radius: 10px;
+}
+.phone::after {
+  /* home indicator */
+  content: "";
+  position: absolute;
+  bottom: 6px; left: 50%;
+  transform: translateX(-50%);
+  width: 90px; height: 3px;
+  background: var(--ink);
+  border-radius: 2px;
+}
+
+.screen {
+  position: relative;
+  width: 100%; height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-top: 20px;
+  box-sizing: border-box;
+  font-family: var(--body);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+/* Status bar */
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 14px 6px;
+  font-family: var(--label);
+  font-size: 11px;
+  color: var(--ink);
+}
+.statusbar .right { display: flex; gap: 4px; }
+
+/* Hand-drawn rough box */
+.rough {
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  filter: url(#wobble);
+}
+.rough-light {
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  filter: url(#wobble-light);
+}
+.rough-dashed {
+  border: 1.8px dashed var(--ink);
+  border-radius: 6px;
+}
+
+.hand { font-family: var(--hand); }
+.label { font-family: var(--label); }
+.lbl-sm { font-family: var(--label); font-size: 10px; letter-spacing: 0.5px; }
+
+/* Annotation styling */
+.note {
+  position: absolute;
+  font-family: var(--hand);
+  font-size: 18px;
+  color: var(--ink);
+  line-height: 1;
+  pointer-events: none;
+}
+.note .arrow {
+  display: block;
+  font-family: var(--hand);
+  font-size: 24px;
+  line-height: 1;
+}
+
+/* Category hatching legend mappings */
+.cat-deep    { background-image: repeating-linear-gradient(45deg, var(--ink) 0 2px, transparent 2px 6px); }
+.cat-study   { background-image: repeating-linear-gradient(-45deg, var(--ink) 0 1.5px, transparent 1.5px 5px); }
+.cat-admin   { background-image: radial-gradient(var(--ink) 1px, transparent 1.4px); background-size: 6px 6px; }
+.cat-gym     { background-image: repeating-linear-gradient(0deg, var(--ink) 0 1.5px, transparent 1.5px 6px); }
+.cat-break   { background-image: repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px 4px); opacity: 0.55; }
+.cat-commute { background-image:
+  repeating-linear-gradient(45deg, var(--ink) 0 1px, transparent 1px 5px),
+  repeating-linear-gradient(-45deg, var(--ink) 0 1px, transparent 1px 5px);
+}
+
+/* "planned" vs "actual" treatments */
+/* PLANNED = future / not yet happened. dashed outline, hatching at low opacity */
+.planned {
+  background-color: transparent;
+  border: 1.8px dashed var(--ink);
+  opacity: 0.45;
+}
+/* ACTUAL = past / already happened. solid border, full opacity hatching, drop shadow */
+.actual {
+  background-color: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+/* RUNNING = task in progress, spans the now line.
+   Top edge solid (we know start). No bottom edge (open-ended).
+   Background filled opaque only above an inner "now" offset. */
+.running {
+  position: absolute;
+  border-top: 2px solid var(--ink);
+  border-left: 2px solid var(--ink);
+  border-right: 2px solid var(--ink);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  overflow: visible;
+  filter: url(#wobble-light);
+}
+.running .filled {
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  border-bottom: 1.5px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.running .pending {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  opacity: 0.45;
+  background-image: repeating-linear-gradient(0deg, transparent 0 6px, var(--ink) 6px 7px);
+  /* dotted bottom edge — open-ended */
+}
+.running .pending::after {
+  content: "⋯";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--hand);
+  font-size: 22px;
+  color: var(--ink);
+  line-height: 1;
+  background: var(--paper);
+  padding: 0 4px;
+}
+
+/* Block contents */
+.block {
+  position: absolute;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: var(--label);
+  font-size: 10px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.block.actual { color: var(--ink); }
+.block.planned { color: var(--ink-soft); }
+
+.tick {
+  font-family: var(--label);
+  font-size: 9.5px;
+  color: var(--ink-faint);
+}
+
+/* Tab bar */
+.tabbar {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  border-top: 2px solid var(--ink);
+  filter: url(#wobble-light);
+  padding: 8px 4px 14px;
+  font-family: var(--label);
+  font-size: 10.5px;
+}
+.tabbar .tab {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2px;
+}
+.tabbar .tab.active { font-weight: 700; }
+.tabbar .icon {
+  width: 18px; height: 18px;
+  border: 1.8px solid var(--ink);
+  border-radius: 4px;
+  filter: url(#wobble);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--hand); font-size: 12px;
+}
+
+/* FAB */
+.fab {
+  position: absolute;
+  right: 16px; bottom: 70px;
+  width: 54px; height: 54px;
+  border-radius: 50%;
+  border: 2.5px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  filter: url(#wobble);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--hand);
+  font-size: 24px;
+  padding-left: 4px; /* visually center the play triangle */
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.fab-secondary {
+  background: var(--paper);
+  color: var(--ink);
+  padding-left: 0;
+  font-size: 26px;
+  width: 46px; height: 46px;
+  right: 20px;
+}
+
+/* Running timer banner */
+.runner {
+  margin: 0 10px;
+  border: 2px solid var(--ink);
+  border-radius: 22px;
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  filter: url(#wobble);
+  font-family: var(--label);
+  font-size: 11.5px;
+  background: var(--paper);
+}
+.runner .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--ink);
+}
+.runner .stop {
+  margin-left: auto;
+  width: 22px; height: 22px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* Date header */
+.datehead {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 14px 4px;
+}
+.datehead .arrows { font-family: var(--hand); font-size: 22px; }
+.datehead .date { font-family: var(--hand); font-size: 22px; font-weight: 600; }
+.datehead .sub { font-family: var(--label); font-size: 11px; color: var(--ink-faint); }
+
+/* Category chip */
+.chip {
+  border: 1.8px solid var(--ink);
+  border-radius: 14px;
+  padding: 5px 10px;
+  font-family: var(--label);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  filter: url(#wobble);
+}
+.chip .swatch {
+  width: 12px; height: 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+}
+.chip.selected { box-shadow: 2px 2px 0 var(--ink); background: var(--paper-shade); }
+
+/* Big input */
+.input {
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--hand);
+  font-size: 20px;
+  background: var(--paper);
+  filter: url(#wobble);
+}
+
+.btn {
+  border: 2.5px solid var(--ink);
+  border-radius: 28px;
+  padding: 12px;
+  font-family: var(--hand);
+  font-size: 24px;
+  text-align: center;
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: 3px 3px 0 rgba(0,0,0,0.2);
+  filter: url(#wobble);
+}
+.btn.outline {
+  background: var(--paper); color: var(--ink);
+}
+
+/* Sheet (modal) */
+.sheet {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 22px 22px 16px 16px;
+  padding: 16px 14px 18px;
+  filter: url(#wobble);
+  box-shadow: 0 -4px 0 rgba(0,0,0,0.05);
+}
+.sheet .handle {
+  width: 44px; height: 4px;
+  background: var(--ink);
+  border-radius: 2px;
+  margin: -4px auto 12px;
+  opacity: 0.4;
+}
+
+.scrim {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0.06) 0 1px, transparent 1px 4px);
+  pointer-events: none;
+}
+
+/* dim screen content behind sheet */
+.dim { opacity: 0.35; }
+
+/* Category legend on canvas */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  font-family: var(--label);
+  font-size: 13px;
+}
+.legend .item { display: flex; align-items: center; gap: 8px; }
+.legend .swatch {
+  width: 22px; height: 22px;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  filter: url(#wobble);
+}
+
+/* arrows / connector marks */
+.scribble-arrow {
+  font-family: var(--hand);
+  font-size: 28px;
+  color: var(--ink);
+  display: inline-block;
+  transform: rotate(-8deg);
+}
+
+/* Tag chip — used in add-entry */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1.5px solid var(--ink);
+  border-radius: 12px;
+  padding: 3px 8px 3px 8px;
+  font-family: var(--label);
+  font-size: 10.5px;
+  filter: url(#wobble-light);
+  background: var(--paper);
+}
+.tag .x {
+  font-family: var(--hand);
+  font-size: 13px;
+  opacity: 0.6;
+}
+.tag.suggestion {
+  background: var(--paper-shade);
+  opacity: 0.7;
+}
+
+/* dropdown panel */
+.dropdown {
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  filter: url(#wobble-light);
+  background: var(--paper);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.dropdown .row {
+  padding: 7px 10px;
+  font-family: var(--label);
+  font-size: 12px;
+  border-bottom: 1px dashed var(--ink-faint);
+}
+.dropdown .row:last-child { border-bottom: none; }
+.dropdown .row.hover { background: var(--paper-shade); font-weight: 700; }
+
+/* chosen-stamp */
+.chosen-stamp {
+  position: absolute;
+  top: 10px; right: -14px;
+  font-family: var(--hand);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  border: 2.5px solid var(--ink);
+  padding: 3px 12px;
+  transform: rotate(8deg);
+  filter: url(#wobble);
+  background: var(--paper);
+  letter-spacing: 1.5px;
+  z-index: 5;
+}
+
+/* freq pill */
+.freq-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px;
+  padding: 2px 6px;
+  font-family: var(--label);
+  font-size: 10px;
+  filter: url(#wobble-light);
+}
+.freq-pill.active { background: var(--ink); color: var(--paper); }
+
+/* popover */
+.popover {
+  position: absolute;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 8px;
+  padding: 10px 12px;
+  filter: url(#wobble);
+  box-shadow: 4px 4px 0 var(--ink);
+  font-family: var(--body);
+  z-index: 4;
+}
+.popover::before {
+  content: "";
+  position: absolute;
+  top: -8px; left: 20px;
+  width: 12px; height: 12px;
+  background: var(--paper);
+  border-top: 2.5px solid var(--ink);
+  border-left: 2.5px solid var(--ink);
+  transform: rotate(45deg);
+}
+
+/* design canvas paper background */
+body, .dc-canvas, .dc-root, [class*="dc-"] {
+  background-color: var(--paper) !important;
+}

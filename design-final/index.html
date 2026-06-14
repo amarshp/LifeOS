@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LifeOS</title>
+<link rel="stylesheet" href="hifi-styles.css" />
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  /* Override canvas surface to fit hi-fi dark theme */
+  body { background: #1a1a1d; }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="hifi-common.jsx"></script>
+<script type="text/babel" src="hifi-dashboard.jsx"></script>
+<script type="text/babel" src="hifi-day.jsx"></script>
+<script type="text/babel" src="hifi-week.jsx"></script>
+<script type="text/babel" src="hifi-sheets.jsx"></script>
+<script type="text/babel" src="hifi-settings.jsx"></script>
+<script type="text/babel" src="hifi-extras.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const PW = 360, PH = 780;
+
+function HiCover() {
+  const cats = [
+    { k:'deep',  hex:'#B5AAC2', name:'Deep Work', tone:'dusty lavender' },
+    { k:'study', hex:'#CCBADD', name:'Study',     tone:'pale lilac' },
+    { k:'admin', hex:'#E7D0A2', name:'Admin',     tone:'chalk butter' },
+    { k:'gym',   hex:'#AFC8AC', name:'Gym',       tone:'sage' },
+    { k:'break', hex:'#D2CFC5', name:'Break',     tone:'mist' },
+    { k:'commute', hex:'#C4B3A4', name:'Commute', tone:'warm taupe' },
+  ];
+  return (
+    <div style={{
+      padding:'48px 56px', maxWidth:960,
+      background:'var(--bg)', color:'var(--ink)',
+      borderRadius:24, border:'1px solid var(--hairline)',
+      fontFamily:'var(--font-ui)',
+    }}>
+      <div style={{
+        fontFamily:'var(--font-display)', fontSize:14, fontWeight:400,
+        letterSpacing:'0.32em', textTransform:'uppercase', color:'var(--ink-3)',
+      }}>An app for time</div>
+
+      <div style={{
+        fontFamily:'var(--font-display)', fontSize:112, fontWeight:300,
+        letterSpacing:'-0.045em', lineHeight:0.92, marginTop:14, color:'var(--ink)',
+      }}>LifeOS<span style={{fontStyle:'italic', color:'var(--ink-3)', fontWeight:300}}>.</span></div>
+
+      <div style={{
+        fontFamily:'var(--font-display)', fontSize:22, fontWeight:300,
+        fontStyle:'italic', color:'var(--ink-2)', marginTop:18, maxWidth:600, lineHeight:1.35,
+      }}>
+        Plan against actual. Opacity follows time — what's lived is solid,
+        what's intended is wash. The running task touches the now-line and
+        keeps going.
+      </div>
+
+      <hr className="hi-rule" style={{margin:'40px 0 28px'}}/>
+
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:48}}>
+        <div>
+          <div className="hi-eyebrow">System</div>
+          <ul style={{margin:'14px 0 0', padding:0, listStyle:'none', display:'grid', gap:10, fontSize:13.5, color:'var(--ink-2)', lineHeight:1.55, fontFamily:'var(--font-ui)', fontWeight:400}}>
+            <li><span style={{color:'var(--ink)'}}>Cream paper</span> · Cormorant Garamond + Inter Light · JetBrains Mono for timer.</li>
+            <li><span style={{color:'var(--ink)'}}>Actual</span> — solid chalk pastel. <span style={{color:'var(--ink)'}}>Planned</span> — same hue, washed into the paper.</li>
+            <li><span style={{color:'var(--ink)'}}>Running</span> is just an actual block ending at the now-line. Its planned remainder sits beneath, and gets eaten.</li>
+            <li><span style={{color:'var(--ink)'}}>Four tabs</span>: Home · Day · Week · Settings.</li>
+            <li><span style={{color:'var(--ink)'}}>Two gestures</span>: ▶ start a timer · ＋ schedule a plan.</li>
+          </ul>
+        </div>
+
+        <div>
+          <div className="hi-eyebrow">Palette</div>
+          <div style={{display:'grid', gridTemplateColumns:'1fr', gap:0, marginTop:14}}>
+            {cats.map(c => (
+              <div key={c.k} style={{display:'flex', alignItems:'center', gap:14, padding:'10px 0', borderBottom:'1px solid var(--hairline)'}}>
+                <div style={{width:26, height:26, borderRadius:50, background:c.hex}}/>
+                <div style={{fontFamily:'var(--font-display)', fontSize:18, fontWeight:500, letterSpacing:'-0.01em'}}>{c.name}</div>
+                <div style={{flex:1, fontFamily:'var(--font-display)', fontStyle:'italic', fontSize:13, color:'var(--ink-3)'}}>{c.tone}</div>
+                <div style={{fontFamily:'var(--font-mono)', fontSize:10.5, color:'var(--ink-4)', letterSpacing:'0.04em'}}>{c.hex}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="hi-eyebrow" style={{marginTop:28, marginBottom:12}}>States</div>
+          <div style={{display:'flex', gap:10}}>
+            <div style={{flex:1, position:'relative', height:80, background:'var(--surface-2)', borderRadius:8, overflow:'hidden'}}>
+              <HiBlock top={10} height={60} left={10} right={10} cat="deep" mode="actual" label="Actual" sub="solid"/>
+            </div>
+            <div style={{flex:1, position:'relative', height:80, background:'var(--surface-2)', borderRadius:8, overflow:'hidden'}}>
+              <HiBlock top={10} height={60} left={10} right={10} cat="deep" mode="planned" label="Planned" sub="washed"/>
+            </div>
+            <div style={{flex:1, position:'relative', height:80, background:'var(--surface-2)', borderRadius:8, overflow:'hidden'}}>
+              <HiBlock top={10} height={32} left={10} right={10} cat="deep" mode="actual" label="Running"/>
+              <HiBlock top={42} height={28} left={10} right={10} cat="deep" mode="planned" label="" sub="remaining"/>
+              <div className="hi-now-line" style={{top:42, left:6, right:6}}/>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <DesignCanvas>
+    <DCSection id="intro" title="LifeOS" subtitle="Hi-fi · iPhone screens · light + dark">
+      <DCArtboard id="cover" label="LifeOS" width={1000} height={620}>
+        <HiCover/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="home" title="① Home · Dashboard" subtitle="Running task + next plan + today snapshot">
+      <DCArtboard id="dash"        label="Dashboard · Light"     width={PW} height={PH}>
+        <HiDashboard/>
+      </DCArtboard>
+      <DCArtboard id="dash-dark"   label="Dashboard · Dark"      width={PW} height={PH}>
+        <HiDashboard dark/>
+      </DCArtboard>
+      <DCArtboard id="dash-empty"  label="Empty · Light"          width={PW} height={PH}>
+        <HiDashboardEmpty/>
+      </DCArtboard>
+      <DCArtboard id="dash-empty-dark" label="Empty · Dark"       width={PW} height={PH}>
+        <HiDashboardEmpty dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="day" title="② Day View" subtitle="Single timeline · tap = edit · hold + drag = move">
+      <DCArtboard id="day"          label="Day · Light"           width={PW} height={PH}>
+        <HiDayView/>
+      </DCArtboard>
+      <DCArtboard id="day-dark"     label="Day · Dark"            width={PW} height={PH}>
+        <HiDayView dark/>
+      </DCArtboard>
+      <DCArtboard id="day-edit"     label="Tap → edit · Light"    width={PW} height={PH}>
+        <HiDayEdit/>
+      </DCArtboard>
+      <DCArtboard id="day-edit-dark" label="Tap → edit · Dark"    width={PW} height={PH}>
+        <HiDayEdit dark/>
+      </DCArtboard>
+      <DCArtboard id="day-drag"     label="Hold + drag · Light"   width={PW} height={PH}>
+        <HiDayDrag/>
+      </DCArtboard>
+      <DCArtboard id="day-drag-dark" label="Hold + drag · Dark"   width={PW} height={PH}>
+        <HiDayDrag dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="week" title="③ Week View" subtitle="3-day editorial layout · today highlighted">
+      <DCArtboard id="week"      label="Week · Light"             width={PW} height={PH}>
+        <HiWeekView/>
+      </DCArtboard>
+      <DCArtboard id="week-dark" label="Week · Dark"              width={PW} height={PH}>
+        <HiWeekView dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="sheets" title="④ Sheets" subtitle="▶ Add Entry · ＋ Add Plan">
+      <DCArtboard id="add-entry"      label="Add Entry · Light"   width={PW} height={PH}>
+        <HiAddEntry/>
+      </DCArtboard>
+      <DCArtboard id="add-entry-dark" label="Add Entry · Dark"    width={PW} height={PH}>
+        <HiAddEntry dark/>
+      </DCArtboard>
+      <DCArtboard id="add-plan"       label="Add Plan · Light"    width={PW} height={PH}>
+        <HiAddPlan/>
+      </DCArtboard>
+      <DCArtboard id="add-plan-dark"  label="Add Plan · Dark"     width={PW} height={PH}>
+        <HiAddPlan dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="settings" title="⑤ Settings" subtitle="Theme toggle lives here">
+      <DCArtboard id="set"      label="Settings · Light"          width={PW} height={PH}>
+        <HiSettings/>
+      </DCArtboard>
+      <DCArtboard id="set-dark" label="Settings · Dark"           width={PW} height={PH}>
+        <HiSettings dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="new-cat" title="⑥ New Category" subtitle="Sheet from ＋ New on any category picker">
+      <DCArtboard id="new-cat"      label="New Category · Light"  width={PW} height={PH}>
+        <HiNewCategory/>
+      </DCArtboard>
+      <DCArtboard id="new-cat-dark" label="New Category · Dark"   width={PW} height={PH}>
+        <HiNewCategory dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="tags" title="⑦ Tag Management" subtitle="Settings → Tags · grouped by category">
+      <DCArtboard id="tags"      label="Tags · Light"             width={PW} height={PH}>
+        <HiTagManagement/>
+      </DCArtboard>
+      <DCArtboard id="tags-dark" label="Tags · Dark"              width={PW} height={PH}>
+        <HiTagManagement dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="stats" title="⑧ Stats & Reports" subtitle="Weekly overview · hours by category · drift">
+      <DCArtboard id="stats"      label="Stats · Light"           width={PW} height={PH}>
+        <HiStats/>
+      </DCArtboard>
+      <DCArtboard id="stats-dark" label="Stats · Dark"            width={PW} height={PH}>
+        <HiStats dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="onboarding" title="⑨ Onboarding" subtitle="Welcome → categories → plan your first day">
+      <DCArtboard id="ob1"      label="Welcome · Light"           width={PW} height={PH}>
+        <HiOnboarding1/>
+      </DCArtboard>
+      <DCArtboard id="ob1-dark" label="Welcome · Dark"            width={PW} height={PH}>
+        <HiOnboarding1 dark/>
+      </DCArtboard>
+      <DCArtboard id="ob2"      label="Categories · Light"        width={PW} height={PH}>
+        <HiOnboarding2/>
+      </DCArtboard>
+      <DCArtboard id="ob2-dark" label="Categories · Dark"         width={PW} height={PH}>
+        <HiOnboarding2 dark/>
+      </DCArtboard>
+      <DCArtboard id="ob3"      label="Plan your day · Light"     width={PW} height={PH}>
+        <HiOnboarding3/>
+      </DCArtboard>
+      <DCArtboard id="ob3-dark" label="Plan your day · Dark"      width={PW} height={PH}>
+        <HiOnboarding3 dark/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="notifs" title="⑩ Notifications" subtitle="Settings → Notifications · timer, plan, drift alerts">
+      <DCArtboard id="notifs"      label="Notifications · Light"  width={PW} height={PH}>
+        <HiNotifications/>
+      </DCArtboard>
+      <DCArtboard id="notifs-dark" label="Notifications · Dark"   width={PW} height={PH}>
+        <HiNotifications dark/>
+      </DCArtboard>
+    </DCSection>
+  </DesignCanvas>
+);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,47 @@
+# ---- Secrets (NEVER COMMIT) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.key
+*.jks
+*.mobileprovision
+
+# ---- Dependencies ----
+node_modules/
+**/node_modules/
+
+# ---- Expo / React Native build artifacts ----
+.expo/
+**/.expo/
+dist/
+web-build/
+expo-env.d.ts
+**/expo-env.d.ts
+.metro-health-check*
+
+# ---- Generated native folders (CNG / prebuild) ----
+/app/ios
+/app/android
+
+# ---- TypeScript ----
+*.tsbuildinfo
+
+# ---- Logs / debug ----
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+debug_screenshots/
+.playwright-mcp/
+
+# ---- Editor / build cruft ----
+*.log
+*.bak
+*.orig.*
+**/*.ts.bak
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

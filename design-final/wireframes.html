@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LifeOS — Wireframes</title>
+<link rel="stylesheet" href="styles.css" />
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<!-- hand-drawn wobble filters -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="wobble">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="3"/>
+      <feDisplacementMap in="SourceGraphic" scale="1.6"/>
+    </filter>
+    <filter id="wobble-light">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="0.9"/>
+    </filter>
+    <filter id="wobble-heavy">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="2" seed="2"/>
+      <feDisplacementMap in="SourceGraphic" scale="2.6"/>
+    </filter>
+  </defs>
+</svg>
+
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="common.jsx"></script>
+<script type="text/babel" src="dashboard.jsx"></script>
+<script type="text/babel" src="day-view.jsx"></script>
+<script type="text/babel" src="refined.jsx"></script>
+<script type="text/babel" src="planning.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const PW = 340, PH = 700;
+
+function Cover() {
+  return (
+    <div style={{padding:'24px 28px', maxWidth:880, fontFamily:'var(--body)'}}>
+      <div style={{fontFamily:'var(--hand)', fontSize:54, fontWeight:700, lineHeight:1}}>LifeOS</div>
+      <div style={{fontFamily:'var(--hand)', fontSize:26, color:'var(--ink-soft)', marginTop:4}}>
+        plan vs. actual · time tracking — final wireframes
+      </div>
+      <div style={{borderTop:'2px solid var(--ink)', margin:'14px 0 14px', filter:'url(#wobble-light)'}}/>
+      <div style={{display:'grid', gridTemplateColumns:'1.2fr 1fr', gap:32}}>
+        <div>
+          <div style={{fontFamily:'var(--label)', fontSize:13, color:'var(--ink-faint)', letterSpacing:1}}>READING THIS</div>
+          <ul style={{fontFamily:'var(--body)', fontSize:15, lineHeight:1.5, paddingLeft:18}}>
+            <li><b>Opacity follows time</b> — past = opaque, future = translucent. Running task crosses the now-line with no end shown.</li>
+            <li>Categories shown by <b>hatching pattern</b> at this stage. Color (indigo/purple/amber/emerald/slate) comes in hi-fi.</li>
+            <li><b>Four tabs</b>: Home (dashboard) · Day · Week · Settings.</li>
+            <li>Two FABs on every primary screen: <b>▶</b> starts a timer (becomes a tracked entry); <b>+</b> creates a plan (future block).</li>
+          </ul>
+        </div>
+        <div>
+          <div style={{fontFamily:'var(--label)', fontSize:13, color:'var(--ink-faint)', letterSpacing:1, marginBottom:6}}>CATEGORIES</div>
+          <Legend/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <DesignCanvas>
+    <DCSection id="intro" title="LifeOS — wireframes" subtitle="Hand-drawn · b&w · iPhone · final picks only">
+      <DCArtboard id="cover" label="readme" width={880} height={400}>
+        <Cover/>
+      </DCArtboard>
+      <DCArtboard id="rule" label="the rule" width={620} height={400}>
+        <MetaphorCard/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="home" title="① Home / Dashboard" subtitle="Main page · running task + next plan + today snapshot">
+      <DCArtboard id="dash" label="Dashboard" width={PW} height={PH}>
+        <Dashboard/>
+      </DCArtboard>
+      <DCArtboard id="dash-empty" label="Empty · nothing running" width={PW} height={PH}>
+        <DashboardEmpty/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="day" title="② Day View" subtitle="Single rail · ▶ start · + plan · tap = edit · hold + drag = move">
+      <DCArtboard id="day-overlay" label="Day" width={PW} height={PH}>
+        <DayV1_Overlay/>
+      </DCArtboard>
+      <DCArtboard id="day-edit"    label="tap a block → edit" width={PW} height={PH}>
+        <DayEditMode/>
+      </DCArtboard>
+      <DCArtboard id="day-drag"    label="hold + drag → move" width={PW} height={PH}>
+        <DayDragMode/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="week" title="③ Week View" subtitle="Compact 7-col · parallel activities · tap day → day view">
+      <DCArtboard id="week-refined" label="Week" width={PW} height={PH}>
+        <WeekRefined/>
+      </DCArtboard>
+      <DCArtboard id="week-flow"    label="tap a day → day view" width={500} height={260}>
+        <WeekToDayFlow/>
+      </DCArtboard>
+      <DCArtboard id="week-parallel" label="parallel activities · explainer" width={620} height={300}>
+        <ParallelDetail/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="sheets" title="④ Sheets" subtitle="▶ Start tracking · + Add plan">
+      <DCArtboard id="add-refined" label="▶ Add Entry · timer running" width={PW} height={PH}>
+        <AddRefined/>
+      </DCArtboard>
+      <DCArtboard id="add-plan" label="+ Add Plan · future block" width={PW} height={PH}>
+        <AddPlanSheet/>
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="notes" title="Open questions" subtitle="Things to confirm before going to hi-fi">
+      <DCArtboard id="qs" label="notes" width={680} height={400}>
+        <div style={{padding:'22px 26px', fontFamily:'var(--body)', fontSize:15, lineHeight:1.55}}>
+          <div style={{fontFamily:'var(--hand)', fontSize:28, fontWeight:700, marginBottom:8}}>still to nail →</div>
+          <ol style={{paddingLeft:20}}>
+            <li><b>Dashboard scrolling</b> — is "Quick start" worth it on the home screen? Or move recent entries to a separate Stats / History view?</li>
+            <li><b>Two FABs</b> — ▶ start vs + plan. Stack feels right? Or should + live in the header instead?</li>
+            <li><b>Parallel activities</b> — 2 splits cleanly; what about 3? "+ parallel" trigger = long-press on ▶?</li>
+            <li><b>Custom categories</b> — does "+ New category" open a full editor (icon, hatching, default tags) or just a name + color?</li>
+            <li><b>Tag scoping</b> — strictly per-category, or can a tag be "global" (e.g. project name)?</li>
+            <li><b>Repeating plans</b> — when you drag one instance of a recurring plan, does the whole series move or just that one? Need a "this · this & future · all" prompt.</li>
+            <li><b>Color move</b> — once locked, swap hatching for the indigo/purple/amber palette on a dark canvas.</li>
+          </ol>
+        </div>
+      </DCArtboard>
+    </DCSection>
+  </DesignCanvas>
+);
+</script>
+
+</body>
+</html>

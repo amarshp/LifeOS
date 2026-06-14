@@ -1,0 +1,661 @@
+import {
+  View, Text, ScrollView, StyleSheet, RefreshControl, ActivityIndicator,
+  Pressable, Modal,
+} from 'react-native'
+import Svg, { Circle } from 'react-native-svg'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSettings } from '../../src/contexts/SettingsContext'
+import { fonts } from '../../src/theme/tokens'
+import { toLocalDateStr } from '../../src/lib/date'
+import * as insightsService from '../../src/services/insights'
+import * as categoriesService from '../../src/services/categories'
+import {
+  computeInsights, buildHeatmapQuarters, buildCategorySeries,
+  type InsightsComputed, type Quarter, type Period, type CategorySeries,
+} from '../../src/lib/computeInsights'
+import type { Category } from '../../src/types/database'
+import type { InsightEntry } from '../../src/services/insights'
+
+// ─── Format helpers ──────────────────────────────────────────────────────────
+
+function fmtH(ms: number): string {
+  if (ms <= 0) return '0m'
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  if (h === 0) return `${m}m`
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+function fmtHDecimal(ms: number): string { return (ms / 3_600_000).toFixed(1) }
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+function fmtDecimalHour(h: number): string {
+  const whole = Math.floor(h)
+  const mins = Math.round((h - whole) * 60)
+  const period = whole < 12 ? 'am' : 'pm'
+  const h12 = whole === 0 ? 12 : whole > 12 ? whole - 12 : whole
+  return mins === 0 ? `${h12}${period}` : `${h12}:${String(mins).padStart(2, '0')}${period}`
+}
+function fmtPeakHour(h: number): string {
+  const fmt = (n: number) => {
+    const h12 = n === 0 ? 12 : n > 12 ? n - 12 : n
+    return `${h12}${n < 12 ? 'am' : 'pm'}`
+  }
+  return `${fmt(h)}–${fmt((h + 1) % 24)}`
+}
+function daysSince(dateStr: string): number {
+  const target = new Date(dateStr + 'T12:00:00')
+  const today = new Date(); today.setHours(12, 0, 0, 0)
+  return Math.floor((today.getTime() - target.getTime()) / 86_400_000)
+}
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '')
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+function heatColor(ms: number, textColor: string): string {
+  const opacity = Math.min(0.12 + (ms / 3_600_000 / 4) * 0.88, 1)
+  const [r, g, b] = hexToRgb(textColor)
+  return `rgba(${r},${g},${b},${opacity.toFixed(2)})`
+}
+function deltaStr(cur: number, prev: number): { text: string; positive: boolean | null } {
+  if (prev <= 0) return { text: cur > 0 ? 'new' : '', positive: null }
+  const pct = Math.round((cur - prev) / prev * 100)
+  if (pct === 0) return { text: '0%', positive: null }
+  return { text: `${pct > 0 ? '+' : ''}${pct}%`, positive: pct > 0 }
+}
+
+const POSITIVE = '#6B9E6B'
+const NEGATIVE = '#B86B6B'
+const CELL = 9, GAP = 1, CELL_TOTAL = CELL + GAP
+
+type TC = ReturnType<typeof useSettings>['colors']
+
+// ─── Info copy ────────────────────────────────────────────────────────────────
+
+const INFO: Record<string, { title: string; body: string }> = {
+  overview: {
+    title: 'Overview',
+    body: 'Time tracked in the selected period, split into Essential (sleep, food, bath, commute — the unavoidable) and Discretionary (work, study, gym, leisure — what you choose). The % beside each category is its share of the period; Δ compares it to the same elapsed slice of the previous period. Tag times under a category can sum to more than the category total — an entry with two tags counts its full time toward each.',
+  },
+  chart: {
+    title: 'Time chart',
+    body: 'Per-bucket time for one category over the period: hourly bars for Day, daily for Week, weekly for Month. Pick a tag to narrow it to one sub-activity (e.g. only "LifeOS" within Study).',
+  },
+  focus: {
+    title: 'Focus',
+    body: 'Deep sessions = uninterrupted blocks of 90 minutes or more in this period. Switches/day = how many times you changed categories within a day, averaged — lower means less context-switching.',
+  },
+  consistency: {
+    title: 'Consistency',
+    body: 'Current and best run of consecutive days with any tracking. The grid shows the last 365 days; darker = more hours that day.',
+  },
+  patterns: {
+    title: 'Patterns',
+    body: 'All-time behaviour: your average tracked hours per weekday, the hour you log the most, and the time you usually start your day.',
+  },
+  sessions: {
+    title: 'Sessions',
+    body: 'All-time session shape: average length of a completed entry, your longest ever, and how your sessions spread across length buckets.',
+  },
+  milestones: {
+    title: 'Milestones',
+    body: 'All-time records and nudges — your biggest day, longest single session, longest streak, and categories you haven’t tracked in a while.',
+  },
+}
+
+// ─── Primitives ─────────────────────────────────────────────────────────────
+
+function SectionHeader({ title, infoKey, tc, onInfo }: { title: string; infoKey?: keyof typeof INFO | string; tc: TC; onInfo: (k: string) => void }) {
+  return (
+    <View style={s.sectionHeaderRow}>
+      <Text style={[s.sectionHeader, { color: tc.text2 }]}>{title}</Text>
+      {infoKey && (
+        <Pressable onPress={() => onInfo(infoKey)} hitSlop={10} style={[s.infoBtn, { borderColor: tc.border2 }]}>
+          <Text style={[s.infoBtnText, { color: tc.text4 }]}>i</Text>
+        </Pressable>
+      )}
+    </View>
+  )
+}
+
+function Divider({ color }: { color: string }) { return <View style={[s.divider, { backgroundColor: color }]} /> }
+
+function HeroStat({ value, label, tc }: { value: string; label: string; tc: TC }) {
+  return (
+    <View style={s.heroStat}>
+      <Text style={[s.heroNum, { color: tc.text1 }]}>{value}</Text>
+      <Text style={[s.heroLabel, { color: tc.text4 }]}>{label}</Text>
+    </View>
+  )
+}
+
+function MicroStat({ label, value, sub, tc }: { label: string; value: string; sub?: string; tc: TC }) {
+  return (
+    <View style={s.microStat}>
+      <Text style={[s.microValue, { color: tc.text1 }]}>{value}</Text>
+      <Text style={[s.microLabel, { color: tc.text3 }]}>{label}</Text>
+      {sub && <Text style={[s.microSub, { color: tc.text4 }]}>{sub}</Text>}
+    </View>
+  )
+}
+
+function SegmentedControl({ period, onChange, tc }: { period: Period; onChange: (p: Period) => void; tc: TC }) {
+  const opts: Array<{ key: Period; label: string }> = [
+    { key: 'day', label: 'Day' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' },
+  ]
+  return (
+    <View style={[s.segment, { backgroundColor: tc.surface1, borderColor: tc.border }]}>
+      {opts.map(o => {
+        const active = period === o.key
+        return (
+          <Pressable key={o.key} onPress={() => onChange(o.key)} style={[s.segmentBtn, active && { backgroundColor: tc.text1 }]}>
+            <Text style={[s.segmentText, { color: active ? tc.bg : tc.text3 }]}>{o.label}</Text>
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+}
+
+function DonutChart({ categories, byCategory, total, trackColor, tc }: {
+  categories: Category[]; byCategory: Record<string, number>; total: number; trackColor: string; tc: TC
+}) {
+  const size = 168, sw = 24, r = (size - sw) / 2, cx = size / 2, cy = size / 2
+  const circ = 2 * Math.PI * r
+  const segs: Array<{ id: string; color: string; rotation: number; dash: number }> = []
+  let cum = 0
+  for (const cat of categories) {
+    const ms = byCategory[cat.id] ?? 0
+    if (ms === 0 || total === 0) continue
+    const fraction = ms / total
+    if (fraction < 0.005) continue
+    segs.push({ id: cat.id, color: cat.color, rotation: -90 + cum * 360, dash: fraction * circ })
+    cum += fraction
+  }
+  return (
+    <View style={{ alignSelf: 'center', width: size, height: size, marginTop: 8 }}>
+      <Svg width={size} height={size}>
+        <Circle cx={cx} cy={cy} r={r} fill="none" stroke={trackColor} strokeWidth={sw} />
+        {segs.map(seg => (
+          <Circle key={seg.id} cx={cx} cy={cy} r={r} fill="none" stroke={seg.color} strokeWidth={sw - 2}
+            strokeDasharray={`${seg.dash} ${circ}`} strokeLinecap="butt" transform={`rotate(${seg.rotation}, ${cx}, ${cy})`} />
+        ))}
+      </Svg>
+      <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={[s.donutCenter, { color: tc.text1 }]}>{fmtHDecimal(total)}h</Text>
+        <Text style={[s.donutUnit, { color: tc.text4 }]}>tracked</Text>
+      </View>
+    </View>
+  )
+}
+
+function CategoryRow({ cat, ms, prevMs, total, tags, tc }: {
+  cat: Category; ms: number; prevMs: number; total: number; tags: Array<{ tag: string; ms: number }>; tc: TC
+}) {
+  const pct = total > 0 ? Math.round(ms / total * 100) : 0
+  const d = deltaStr(ms, prevMs)
+  return (
+    <View style={s.catRow}>
+      <View style={s.catRowMain}>
+        <View style={[s.dot, { backgroundColor: cat.color }]} />
+        <Text style={[s.catRowName, { color: tc.text1 }]} numberOfLines={1}>{cat.name}</Text>
+        <Text style={[s.catRowPct, { color: tc.text4 }]}>{pct}%</Text>
+        <Text style={[s.catRowTime, { color: tc.text2 }]}>{fmtH(ms)}</Text>
+        <Text style={[s.catRowDelta, { color: d.positive === null ? tc.text4 : d.positive ? POSITIVE : NEGATIVE }]}>{d.text}</Text>
+      </View>
+      {tags.length > 0 && (
+        <Text style={[s.catRowTags, { color: tc.text4 }]} numberOfLines={2}>
+          {tags.slice(0, 6).map(t => `${t.tag} ${fmtH(t.ms)}`).join('   ·   ')}
+        </Text>
+      )}
+    </View>
+  )
+}
+
+function VerticalBarChart({ series, color, trackColor, tc }: { series: CategorySeries; color: string; trackColor: string; tc: TC }) {
+  const max = Math.max(...series.buckets.map(b => b.ms), 1)
+  return (
+    <View style={s.chartWrap}>
+      <View style={s.chartBars}>
+        {series.buckets.map((b, i) => {
+          const h = b.ms > 0 ? Math.max((b.ms / max) * 96, 3) : 0
+          return (
+            <View key={i} style={s.chartCol}>
+              <View style={s.chartBarArea}>
+                <View style={[s.chartBar, { height: h, backgroundColor: b.ms > 0 ? color : trackColor }]} />
+              </View>
+              <Text style={[s.chartLabel, { color: tc.text4 }]} numberOfLines={1}>{b.label}</Text>
+            </View>
+          )
+        })}
+      </View>
+    </View>
+  )
+}
+
+function Chip({ label, dotColor, active, onPress, tc }: { label: string; dotColor?: string; active: boolean; onPress: () => void; tc: TC }) {
+  return (
+    <Pressable onPress={onPress} style={[s.chip, { borderColor: active ? tc.text1 : tc.border2, backgroundColor: active ? tc.text1 : 'transparent' }]}>
+      {dotColor && <View style={[s.chipDot, { backgroundColor: dotColor }]} />}
+      <Text style={[s.chipText, { color: active ? tc.bg : tc.text2 }]} numberOfLines={1}>{label}</Text>
+    </Pressable>
+  )
+}
+
+function HeatmapGrid({ quarters, tc }: { quarters: Quarter[]; tc: TC }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+      <View style={{ marginTop: 22, marginRight: 5 }}>
+        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((l, i) => (
+          <View key={i} style={{ height: CELL_TOTAL, justifyContent: 'center' }}>
+            <Text style={[s.heatDayLabel, { color: tc.text4 }]}>{l}</Text>
+          </View>
+        ))}
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+          {quarters.map((q, qi) => (
+            <View key={qi} style={{ marginRight: qi < quarters.length - 1 ? 14 : 0 }}>
+              <Text style={[s.quarterLabel, { color: tc.text4 }]}>{q.label}</Text>
+              <View style={{ flexDirection: 'row' }}>
+                {q.weeks.map((week, wi) => (
+                  <View key={wi} style={{ marginRight: GAP }}>
+                    {week.map((cell, di) => (
+                      <View key={di} style={[s.heatCell, {
+                        backgroundColor: cell === null ? 'transparent' : cell.ms > 0 ? heatColor(cell.ms, tc.text1) : tc.surface1,
+                      }]} />
+                    ))}
+                  </View>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  )
+}
+
+function BarRow({ label, value, pct, color, tc }: { label: string; value: string; pct: number; color: string; tc: TC }) {
+  return (
+    <View style={s.barRow}>
+      <Text style={[s.barLabel, { color: tc.text4 }]}>{label}</Text>
+      <View style={[s.barTrack, { backgroundColor: tc.surface1 }]}>
+        <View style={[s.barFill, { width: `${pct}%`, backgroundColor: color }]} />
+      </View>
+      <Text style={[s.barValue, { color: tc.text3 }]}>{value}</Text>
+    </View>
+  )
+}
+
+function MilestoneRow({ label, value, tc }: { label: string; value: string; tc: TC }) {
+  return (
+    <View style={s.milestoneRow}>
+      <Text style={[s.milestoneLabel, { color: tc.text3 }]}>{label}</Text>
+      <Text style={[s.milestoneValue, { color: tc.text1 }]}>{value}</Text>
+    </View>
+  )
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function InsightsScreen() {
+  const { weekStartsOn, colors: tc } = useSettings()
+  const [entries, setEntries] = useState<InsightEntry[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [nowTs, setNowTs] = useState(() => Date.now())
+  const [period, setPeriod] = useState<Period>('week')
+  const [selectedCatId, setSelectedCatId] = useState<string | null>(null)
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [info, setInfo] = useState<{ title: string; body: string } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const loadData = useCallback(async () => {
+    try {
+      const [ents, cats] = await Promise.all([
+        insightsService.getAllEntries(),
+        categoriesService.getCategories(),
+      ])
+      setEntries(ents)
+      setCategories(cats)
+      setNowTs(Date.now())
+    } catch { /* keep previous data */ }
+    finally { setLoading(false); setRefreshing(false) }
+  }, [])
+
+  useEffect(() => { setLoading(true); void loadData() }, [loadData])
+  const onRefresh = useCallback(() => { setRefreshing(true); void loadData() }, [loadData])
+
+  const data: InsightsComputed | null = useMemo(() => {
+    if (categories.length === 0 && entries.length === 0) return null
+    return computeInsights(entries, categories, [], weekStartsOn, new Date(nowTs), period)
+  }, [entries, categories, weekStartsOn, nowTs, period])
+
+  const activeCats = useMemo(
+    () => categories.filter(c => (data?.categoryStats[c.id]?.allTimeMs ?? 0) > 0),
+    [categories, data],
+  )
+
+  // Default the chart to the top discretionary category for the period.
+  useEffect(() => {
+    if (!data || activeCats.length === 0) return
+    if (selectedCatId && activeCats.some(c => c.id === selectedCatId)) return
+    const ranked = [...activeCats].sort((a, b) => (data.byCategory[b.id] ?? 0) - (data.byCategory[a.id] ?? 0))
+    const top = ranked.find(c => (c.kind ?? 'discretionary') !== 'essential') ?? ranked[0]
+    setSelectedCatId(top?.id ?? null)
+    setSelectedTag(null)
+  }, [data, activeCats, selectedCatId])
+
+  const chartCat = categories.find(c => c.id === selectedCatId) ?? null
+  const series: CategorySeries | null = useMemo(() => {
+    if (!selectedCatId) return null
+    return buildCategorySeries(entries, { categoryId: selectedCatId, tag: selectedTag, period, now: new Date(nowTs), weekStartsOn })
+  }, [entries, selectedCatId, selectedTag, period, nowTs, weekStartsOn])
+
+  const chartTags = selectedCatId ? (data?.tagsByCategory[selectedCatId] ?? []) : []
+
+  if (loading) {
+    return <View style={[s.safe, { backgroundColor: tc.bg, alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator color={tc.text3} /></View>
+  }
+  if (!data) return <View style={[s.safe, { backgroundColor: tc.bg }]} />
+
+  const quarters = buildHeatmapQuarters(data.heatmapStartDate, data.dailyMs)
+  const maxDow = Math.max(...data.dayOfWeekAvgMs, 1)
+  const dayLabels = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+  const bucketLabels = ['< 30m', '30–60m', '1–2h', '2h+']
+  const maxBucket = Math.max(...data.sessionBuckets, 1)
+
+  const discCats = activeCats.filter(c => (c.kind ?? 'discretionary') !== 'essential' && (data.byCategory[c.id] ?? 0) > 0)
+    .sort((a, b) => (data.byCategory[b.id] ?? 0) - (data.byCategory[a.id] ?? 0))
+  const essCats = activeCats.filter(c => (c.kind ?? 'discretionary') === 'essential' && (data.byCategory[c.id] ?? 0) > 0)
+    .sort((a, b) => (data.byCategory[b.id] ?? 0) - (data.byCategory[a.id] ?? 0))
+
+  const splitTotal = data.periodTotalMs
+  const discPct = splitTotal > 0 ? Math.round(data.discretionaryMs / splitTotal * 100) : 0
+  const essPct = splitTotal > 0 ? 100 - discPct : 0
+  const periodDelta = deltaStr(data.periodTotalMs, data.prevTotalMs)
+
+  const trackingSinceStr = data.trackingSince
+    ? `Since ${fmtDate(data.trackingSince.toISOString())} · ${daysSince(toLocalDateStr(data.trackingSince))} days`
+    : null
+
+  return (
+    <View style={[s.safe, { backgroundColor: tc.bg }]}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={tc.text3} />}>
+
+        <Text style={[s.title, { color: tc.text1 }]}>Insights</Text>
+        <SegmentedControl period={period} onChange={setPeriod} tc={tc} />
+
+        {/* Hero (all-time) */}
+        <View style={s.heroRow}>
+          <HeroStat value={`${Math.round(data.allTimeMs / 3_600_000)}h`} label="tracked" tc={tc} />
+          <View style={[s.heroDivider, { backgroundColor: tc.border }]} />
+          <HeroStat value={String(data.allTimeDays)} label="full days" tc={tc} />
+          <View style={[s.heroDivider, { backgroundColor: tc.border }]} />
+          <HeroStat value={String(data.totalEntries)} label="entries" tc={tc} />
+        </View>
+        {trackingSinceStr && <Text style={[s.since, { color: tc.text4 }]}>{trackingSinceStr}</Text>}
+
+        <Divider color={tc.border} />
+
+        {/* Overview (period) */}
+        <SectionHeader title={data.periodLabel} infoKey="overview" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        {splitTotal > 0 ? (
+          <>
+            <View style={s.splitHeadRow}>
+              <Text style={[s.splitTotal, { color: tc.text1 }]}>{fmtH(data.periodTotalMs)}</Text>
+              {periodDelta.text !== '' && (
+                <Text style={[s.splitDelta, { color: periodDelta.positive === null ? tc.text4 : periodDelta.positive ? POSITIVE : NEGATIVE }]}>
+                  {periodDelta.text} vs last
+                </Text>
+              )}
+            </View>
+            {/* Essential vs discretionary split bar */}
+            <View style={[s.splitBar, { backgroundColor: tc.surface1 }]}>
+              <View style={{ width: `${discPct}%`, backgroundColor: tc.text1 }} />
+              <View style={{ width: `${essPct}%`, backgroundColor: tc.text4 }} />
+            </View>
+            <View style={s.splitLegend}>
+              <Text style={[s.splitLegendText, { color: tc.text2 }]}>● Discretionary {discPct}% · {fmtH(data.discretionaryMs)}</Text>
+              <Text style={[s.splitLegendText, { color: tc.text4 }]}>● Essential {essPct}% · {fmtH(data.essentialMs)}</Text>
+            </View>
+
+            <DonutChart categories={categories} byCategory={data.byCategory} total={splitTotal} trackColor={tc.surface1} tc={tc} />
+
+            {discCats.length > 0 && (
+              <>
+                <Text style={[s.groupLabel, { color: tc.text3 }]}>Discretionary</Text>
+                {discCats.map(cat => (
+                  <CategoryRow key={cat.id} cat={cat} ms={data.byCategory[cat.id] ?? 0} prevMs={data.prevByCategory[cat.id] ?? 0}
+                    total={splitTotal} tags={data.tagsByCategory[cat.id] ?? []} tc={tc} />
+                ))}
+              </>
+            )}
+            {essCats.length > 0 && (
+              <>
+                <Text style={[s.groupLabel, { color: tc.text3 }]}>Essential</Text>
+                {essCats.map(cat => (
+                  <CategoryRow key={cat.id} cat={cat} ms={data.byCategory[cat.id] ?? 0} prevMs={data.prevByCategory[cat.id] ?? 0}
+                    total={splitTotal} tags={data.tagsByCategory[cat.id] ?? []} tc={tc} />
+                ))}
+              </>
+            )}
+          </>
+        ) : (
+          <Text style={[s.emptyHint, { color: tc.text4 }]}>Nothing tracked {data.periodLabel.toLowerCase()} yet.</Text>
+        )}
+
+        <Divider color={tc.border} />
+
+        {/* Time chart (Screentime-style) */}
+        <SectionHeader title="Time chart" infoKey="chart" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
+          {activeCats.map(cat => (
+            <Chip key={cat.id} label={cat.name} dotColor={cat.color} active={selectedCatId === cat.id}
+              onPress={() => { setSelectedCatId(cat.id); setSelectedTag(null) }} tc={tc} />
+          ))}
+        </ScrollView>
+        {chartTags.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[s.chipRow, { marginTop: 8 }]}>
+            <Chip label="All" active={selectedTag === null} onPress={() => setSelectedTag(null)} tc={tc} />
+            {chartTags.map(t => (
+              <Chip key={t.tag} label={t.tag} active={selectedTag === t.tag} onPress={() => setSelectedTag(t.tag)} tc={tc} />
+            ))}
+          </ScrollView>
+        )}
+        {series && chartCat && (
+          <>
+            <View style={s.chartTotalRow}>
+              <Text style={[s.chartTotal, { color: tc.text1 }]}>{fmtH(series.totalMs)}</Text>
+              {period !== 'day' && (
+                <Text style={[s.chartAvg, { color: tc.text4 }]}>{fmtH(Math.round(series.avgMsPerDay))}/day avg</Text>
+              )}
+            </View>
+            <VerticalBarChart series={series} color={chartCat.color} trackColor={tc.surface1} tc={tc} />
+          </>
+        )}
+
+        <Divider color={tc.border} />
+
+        {/* Focus (period) */}
+        <SectionHeader title="Focus" infoKey="focus" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        <View style={s.twoCol}>
+          <MicroStat label="DEEP SESSIONS" value={`${data.deepWorkCount}`} tc={tc} />
+          <MicroStat label="SWITCHES / DAY" value={data.switchRate > 0 ? data.switchRate.toFixed(1) : '—'} tc={tc} />
+        </View>
+
+        <Divider color={tc.border} />
+
+        {/* Consistency (all-time) */}
+        <SectionHeader title="Consistency" infoKey="consistency" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        <View style={s.twoCol}>
+          <MicroStat label="CURRENT STREAK" value={`${data.currentStreak} days`} tc={tc} />
+          <MicroStat label="BEST STREAK" value={`${data.bestStreak} days`} tc={tc} />
+        </View>
+        <View style={{ marginTop: 20 }}><HeatmapGrid quarters={quarters} tc={tc} /></View>
+
+        <Divider color={tc.border} />
+
+        {/* Patterns (all-time) */}
+        <SectionHeader title="Patterns" infoKey="patterns" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        <View style={s.bars}>
+          {data.dayOfWeekAvgMs.map((ms, i) => (
+            <BarRow key={i} label={dayLabels[i]} value={fmtH(ms)} pct={maxDow > 0 ? ms / maxDow * 100 : 0} color={tc.text3} tc={tc} />
+          ))}
+        </View>
+        <View style={[s.twoCol, { marginTop: 20 }]}>
+          {data.peakHour !== null && <MicroStat label="PEAK HOUR" value={fmtPeakHour(data.peakHour)} tc={tc} />}
+          {data.avgStartHour !== null && <MicroStat label="USUALLY STARTS" value={fmtDecimalHour(data.avgStartHour)} tc={tc} />}
+        </View>
+
+        <Divider color={tc.border} />
+
+        {/* Sessions (all-time) */}
+        <SectionHeader title="Sessions" infoKey="sessions" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        <View style={s.twoCol}>
+          <MicroStat label="AVG SESSION" value={data.avgSessionMs > 0 ? fmtH(Math.round(data.avgSessionMs)) : '—'} tc={tc} />
+          {data.longestSession ? (
+            <MicroStat label="LONGEST EVER" value={fmtH(data.longestSession.ms)}
+              sub={`${categories.find(c => c.id === data.longestSession!.categoryId)?.name} · ${fmtDate(data.longestSession.date)}`} tc={tc} />
+          ) : <MicroStat label="LONGEST EVER" value="—" tc={tc} />}
+        </View>
+        {data.sessionBuckets.some(b => b > 0) && (
+          <View style={[s.bars, { marginTop: 16 }]}>
+            {data.sessionBuckets.map((count, i) => (
+              <BarRow key={i} label={bucketLabels[i]} value={String(count)} pct={maxBucket > 0 ? count / maxBucket * 100 : 0} color={tc.text3} tc={tc} />
+            ))}
+          </View>
+        )}
+
+        <Divider color={tc.border} />
+
+        {/* Milestones (all-time) */}
+        <SectionHeader title="Milestones" infoKey="milestones" tc={tc} onInfo={k => setInfo(INFO[k])} />
+        {data.mostMsInDay && <MilestoneRow label="Most in a day" value={`${fmtH(data.mostMsInDay.ms)} · ${fmtDate(data.mostMsInDay.date + 'T12:00:00')}`} tc={tc} />}
+        {data.longestSession && (
+          <MilestoneRow label="Longest session"
+            value={`${fmtH(data.longestSession.ms)} · ${categories.find(c => c.id === data.longestSession!.categoryId)?.name}`} tc={tc} />
+        )}
+        <MilestoneRow label="Longest streak" value={`${data.bestStreak} days`} tc={tc} />
+        {categories
+          .filter(c => { const lt = data.categoryStats[c.id]?.lastTracked; return lt ? daysSince(lt) >= 7 : false })
+          .sort((a, b) => (data.categoryStats[a.id]?.lastTracked ?? '') < (data.categoryStats[b.id]?.lastTracked ?? '') ? -1 : 1)
+          .slice(0, 3)
+          .map(cat => (
+            <MilestoneRow key={cat.id + '_stale'} label={`Haven't tracked ${cat.name}`} value={`${daysSince(data.categoryStats[cat.id].lastTracked!)} days`} tc={tc} />
+          ))}
+
+        <View style={{ height: 40 }} />
+      </ScrollView>
+
+      {/* Info popover */}
+      <Modal visible={info !== null} transparent animationType="fade" onRequestClose={() => setInfo(null)}>
+        <Pressable style={s.infoBackdrop} onPress={() => setInfo(null)}>
+          <Pressable style={[s.infoCard, { backgroundColor: tc.surface2, borderColor: tc.border }]} onPress={() => {}}>
+            <Text style={[s.infoTitle, { color: tc.text1 }]}>{info?.title}</Text>
+            <Text style={[s.infoBody, { color: tc.text2 }]}>{info?.body}</Text>
+            <Pressable onPress={() => setInfo(null)} style={[s.infoClose, { backgroundColor: tc.text1 }]}>
+              <Text style={[s.infoCloseText, { color: tc.bg }]}>Got it</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  )
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  safe: { flex: 1 },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: 22, paddingTop: 60, paddingBottom: 48 },
+
+  title: { fontSize: 30, fontFamily: fonts.displayBold, letterSpacing: -0.8, marginBottom: 16 },
+
+  segment: { flexDirection: 'row', borderRadius: 12, borderWidth: 1, padding: 3, marginBottom: 26 },
+  segmentBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+  segmentText: { fontSize: 13.5, fontFamily: fonts.ui, fontWeight: '600', letterSpacing: 0.2 },
+
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  sectionHeader: { fontSize: 16, fontFamily: fonts.displaySemiBold, letterSpacing: -0.2 },
+  infoBtn: { width: 20, height: 20, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  infoBtnText: { fontSize: 11, fontFamily: fonts.displayItalic, fontWeight: '600', lineHeight: 14 },
+
+  divider: { height: 1, marginVertical: 26 },
+  since: { fontSize: 12, fontFamily: fonts.ui, marginTop: 8, textAlign: 'center' },
+  emptyHint: { fontSize: 13.5, fontFamily: fonts.ui, textAlign: 'center', marginVertical: 12 },
+
+  heroRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  heroDivider: { width: 1, height: 34 },
+  heroStat: { flex: 1, alignItems: 'center' },
+  heroNum: { fontSize: 30, fontFamily: fonts.displayBold, letterSpacing: -1, fontVariant: ['tabular-nums'] },
+  heroLabel: { fontSize: 11.5, fontFamily: fonts.ui, marginTop: 4 },
+
+  donutCenter: { fontSize: 26, fontFamily: fonts.displayBold, letterSpacing: -0.8, fontVariant: ['tabular-nums'] },
+  donutUnit: { fontSize: 11.5, fontFamily: fonts.ui, marginTop: 2 },
+
+  splitHeadRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 },
+  splitTotal: { fontSize: 24, fontFamily: fonts.displayBold, letterSpacing: -0.6, fontVariant: ['tabular-nums'] },
+  splitDelta: { fontSize: 13, fontFamily: fonts.ui, fontWeight: '600' },
+  splitBar: { flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden' },
+  splitLegend: { marginTop: 8, gap: 3 },
+  splitLegendText: { fontSize: 12.5, fontFamily: fonts.ui },
+
+  groupLabel: { fontSize: 12, fontFamily: fonts.ui, fontWeight: '700', letterSpacing: 0.4, marginTop: 18, marginBottom: 8, textTransform: 'uppercase' },
+  catRow: { paddingVertical: 9, gap: 4 },
+  catRowMain: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  catRowName: { flex: 1, fontSize: 15, fontFamily: fonts.ui, fontWeight: '500' },
+  catRowPct: { fontSize: 12.5, fontFamily: fonts.ui, width: 38, textAlign: 'right' },
+  catRowTime: { fontSize: 14, fontFamily: fonts.mono, width: 64, textAlign: 'right', fontVariant: ['tabular-nums'] },
+  catRowDelta: { fontSize: 12.5, fontFamily: fonts.ui, fontWeight: '600', width: 46, textAlign: 'right' },
+  catRowTags: { fontSize: 12, fontFamily: fonts.ui, marginLeft: 18, lineHeight: 17 },
+
+  dot: { width: 9, height: 9, borderRadius: 4.5 },
+
+  chipRow: { gap: 8, paddingRight: 8 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  chipDot: { width: 8, height: 8, borderRadius: 4 },
+  chipText: { fontSize: 13, fontFamily: fonts.ui, fontWeight: '500', maxWidth: 120 },
+
+  chartTotalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 18 },
+  chartTotal: { fontSize: 22, fontFamily: fonts.displayBold, letterSpacing: -0.5, fontVariant: ['tabular-nums'] },
+  chartAvg: { fontSize: 13, fontFamily: fonts.ui },
+  chartWrap: { marginTop: 14 },
+  chartBars: { flexDirection: 'row', alignItems: 'flex-end', height: 120, gap: 3 },
+  chartCol: { flex: 1, alignItems: 'center', gap: 6 },
+  chartBarArea: { height: 96, justifyContent: 'flex-end', width: '100%', alignItems: 'center' },
+  chartBar: { width: '78%', minWidth: 4, borderRadius: 3 },
+  chartLabel: { fontSize: 10, fontFamily: fonts.ui },
+
+  twoCol: { flexDirection: 'row', gap: 0 },
+  microStat: { flex: 1, gap: 4 },
+  microValue: { fontSize: 22, fontFamily: fonts.displayBold, letterSpacing: -0.6, fontVariant: ['tabular-nums'] },
+  microLabel: { fontSize: 11, fontFamily: fonts.ui, fontWeight: '600', letterSpacing: 0.3 },
+  microSub: { fontSize: 11.5, fontFamily: fonts.ui, marginTop: 2 },
+
+  heatDayLabel: { fontSize: 9, fontFamily: fonts.ui, width: 10, textAlign: 'center' },
+  quarterLabel: { fontSize: 11, fontFamily: fonts.ui, fontWeight: '600', marginBottom: 4, height: 22 },
+  heatCell: { width: CELL, height: CELL, borderRadius: 2, marginBottom: GAP },
+
+  bars: { gap: 10 },
+  barRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  barLabel: { width: 38, fontSize: 11, fontFamily: fonts.ui, fontWeight: '600' },
+  barTrack: { flex: 1, height: 5, borderRadius: 3 },
+  barFill: { height: 5, borderRadius: 3 },
+  barValue: { width: 54, fontSize: 12.5, fontFamily: fonts.mono, fontVariant: ['tabular-nums'], textAlign: 'right' },
+
+  milestoneRow: { paddingVertical: 10, gap: 3 },
+  milestoneLabel: { fontSize: 12.5, fontFamily: fonts.ui },
+  milestoneValue: { fontSize: 15, fontFamily: fonts.displaySemiBold, letterSpacing: -0.2 },
+
+  infoBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 32 },
+  infoCard: { borderRadius: 18, borderWidth: 1, padding: 22, maxWidth: 380, gap: 12 },
+  infoTitle: { fontSize: 19, fontFamily: fonts.displaySemiBold, letterSpacing: -0.3 },
+  infoBody: { fontSize: 14.5, fontFamily: fonts.ui, lineHeight: 21 },
+  infoClose: { alignSelf: 'flex-end', paddingHorizontal: 18, paddingVertical: 9, borderRadius: 20, marginTop: 4 },
+  infoCloseText: { fontSize: 13.5, fontFamily: fonts.ui, fontWeight: '600' },
+})
