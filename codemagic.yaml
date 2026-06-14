@@ -1,0 +1,51 @@
+# Codemagic CI — overflow valve for iOS dev-client builds when the EAS cloud
+# monthly quota is exhausted. Runs `eas build --local` on Codemagic's macOS
+# runner: it produces an installable .ipa WITHOUT consuming EAS cloud build
+# credits, while reusing the Apple credentials EAS already manages (distribution
+# cert, ad-hoc provisioning profile, your registered device UDID).
+#
+# Free tier (personal account): 500 macOS build-minutes / month.
+#
+# ── One-time setup in the Codemagic UI ───────────────────────────────────────
+#   1. Push this repo to a remote (GitHub/GitLab/Bitbucket) and connect it in
+#      Codemagic. (.env is gitignored — keep it that way; never commit secrets.)
+#   2. Create an environment-variable GROUP named "expo" with:
+#        EXPO_TOKEN = <token from https://expo.dev/settings/access-tokens>
+#      Mark it Secure. This lets `eas build --local` fetch the signing creds.
+#   3. Start the "ios-dev" workflow. Download the artifact (app/build/LifeOS.ipa)
+#      and install on the device (it's signed for your registered UDID).
+#
+# Only NATIVE changes need this (native deps, config plugins, Info.plist, Siri
+# phrases, Live Activity). All JS/TS iterates over Metro for free — no rebuild.
+
+workflows:
+  ios-dev:
+    name: iOS dev client (EAS local — no cloud quota)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      groups:
+        - expo            # provides EXPO_TOKEN
+      node: 20            # Expo SDK 54 → Node 20
+      vars:
+        EXPO_NO_TELEMETRY: "1"
+    cache:
+      cache_paths:
+        - $HOME/.npm
+        - app/node_modules
+    scripts:
+      - name: Install JS deps
+        script: |
+          cd app
+          npm ci
+      - name: Build iOS dev client locally (does NOT use an EAS cloud credit)
+        script: |
+          cd app
+          npx eas-cli build \
+            --platform ios \
+            --profile development \
+            --local \
+            --non-interactive \
+            --output "$CM_BUILD_DIR/app/build/LifeOS.ipa"
+    artifacts:
+      - app/build/*.ipa
