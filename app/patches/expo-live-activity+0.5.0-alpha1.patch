@@ -1,0 +1,60 @@
+diff --git a/node_modules/expo-live-activity/ios-files/LiveActivityMediumView.swift b/node_modules/expo-live-activity/ios-files/LiveActivityMediumView.swift
+index 5304127..18bf6ce 100644
+--- a/node_modules/expo-live-activity/ios-files/LiveActivityMediumView.swift
++++ b/node_modules/expo-live-activity/ios-files/LiveActivityMediumView.swift
+@@ -88,6 +88,20 @@ struct LiveActivityMediumView: View {
+             alignedImage(imageName, .trailing, false)
+           }
+         }
++
++        if let link = attributes.deepLinkUrl, let url = URL(string: link) {
++          Spacer(minLength: 8)
++          Link(destination: url) {
++            Text("STOP")
++              .font(.caption)
++              .fontWeight(.bold)
++              .foregroundStyle(.white)
++              .padding(.horizontal, 18)
++              .padding(.vertical, 11)
++              .background(Color(red: 0.78, green: 0.06, blue: 0.18))
++              .clipShape(Capsule())
++          }
++        }
+       }
+ 
+       if !effectiveStretch {
+diff --git a/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift b/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift
+index 9f3d5fe..5a48eb3 100644
+--- a/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift
++++ b/node_modules/expo-live-activity/ios-files/LiveActivityWidget.swift
+@@ -168,6 +168,18 @@ public struct LiveActivityWidget: Widget {
+             dynamicIslandExpandedTrailing(imageName: imageName)
+               .padding(.trailing, 5)
+               .applyWidgetURL(from: context.attributes.deepLinkUrl)
++          } else if let link = context.attributes.deepLinkUrl, let url = URL(string: link) {
++            Link(destination: url) {
++              Text("STOP")
++                .font(.caption)
++                .fontWeight(.bold)
++                .foregroundStyle(.white)
++                .padding(.horizontal, 14)
++                .padding(.vertical, 8)
++                .background(Color(red: 0.78, green: 0.06, blue: 0.18))
++                .clipShape(Capsule())
++            }
++            .padding(.trailing, 5)
+           }
+         }
+         DynamicIslandExpandedRegion(.bottom) {
+@@ -200,6 +212,11 @@ public struct LiveActivityWidget: Widget {
+           resizableImage(imageName: dynamicIslandImageName)
+             .frame(maxWidth: 23, maxHeight: 23)
+             .applyWidgetURL(from: context.attributes.deepLinkUrl)
++        } else {
++          Circle()
++            .fill(context.attributes.progressViewTint.map { Color(hex: $0) } ?? .red)
++            .frame(width: 10, height: 10)
++            .applyWidgetURL(from: context.attributes.deepLinkUrl)
+         }
+       } compactTrailing: {
+         if let startDate = context.state.elapsedTimerStartDateInMilliseconds {

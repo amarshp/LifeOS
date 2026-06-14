@@ -99,6 +99,9 @@
 ## Live Activities (iOS)
 - Running timers appear on the Lock Screen + Dynamic Island, counting up live on-device (no push server) via expo-live-activity `elapsedTimer`
 - Shows entry title + category; reconciled from the running-timer set (starts on run, updates on change, stops on stop), supports parallel timers
+- Red **STOP** button on the lock-screen activity + expanded Dynamic Island: tapping it deep-links into the app (`lifeos://stop-start?entry=ID`), which stops that timer and opens the start sheet to begin another
+- Compact Dynamic Island shows a category-color dot + count-up timer
+- Library SwiftUI customized via patch-package (`patches/expo-live-activity+*.patch`)
 - iOS 16.2+ only; no-op on Android/web
 
 ## Auth
