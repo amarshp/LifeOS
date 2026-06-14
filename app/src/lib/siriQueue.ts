@@ -24,8 +24,10 @@ interface TrackCommand {
   at: string // ISO8601
 }
 
-// Categories + recent distinct titles → the names Siri can match.
+// Categories + recent distinct titles → the names Siri can match. Also a
+// default category for free-text Siri entries (e.g. "track dinner").
 export function syncQuickTasks(categories: Category[], recent: TimeEntry[]): void {
+  if (categories.length === 0) return
   const tasks: QuickTask[] = categories.map((c) => ({ id: c.id, title: c.name, categoryId: c.id }))
   const seen = new Set(categories.map((c) => c.name.toLowerCase()))
   for (const e of recent) {
@@ -35,11 +37,13 @@ export function syncQuickTasks(categories: Category[], recent: TimeEntry[]): voi
       tasks.push({ id: `t:${e.id}`, title: e.title, categoryId: e.category_id })
     }
   }
+  const defaultCategoryId =
+    categories.find((c) => ['misc', 'inbox', 'other'].includes(c.name.toLowerCase()))?.id ?? categories[0].id
   try {
     const f = new File(Paths.document, TASKS_FILE)
     if (f.exists) f.delete()
     f.create()
-    f.write(JSON.stringify(tasks))
+    f.write(JSON.stringify({ defaultCategoryId, tasks }))
   } catch {
     // best-effort
   }

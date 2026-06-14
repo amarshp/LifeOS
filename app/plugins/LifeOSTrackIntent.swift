@@ -18,18 +18,27 @@ private func documentsURL(_ name: String) -> URL? {
 }
 
 @available(iOS 16.0, *)
-private func loadTasks() -> [TaskEntity] {
+private func loadConfig() -> (defaultCategoryId: String, tasks: [TaskEntity]) {
   guard let url = documentsURL("lifeos_quick_tasks.json"),
         let data = try? Data(contentsOf: url),
-        let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-  else { return [] }
-  return arr.compactMap { item in
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+  else { return ("", []) }
+  let def = obj["defaultCategoryId"] as? String ?? ""
+  let arr = obj["tasks"] as? [[String: Any]] ?? []
+  let tasks: [TaskEntity] = arr.compactMap { item in
     guard let id = item["id"] as? String,
           let title = item["title"] as? String,
           let categoryId = item["categoryId"] as? String else { return nil }
     return TaskEntity(id: id, title: title, categoryId: categoryId)
   }
+  return (def, tasks)
 }
+
+@available(iOS 16.0, *)
+private func loadTasks() -> [TaskEntity] { loadConfig().tasks }
+
+@available(iOS 16.0, *)
+private func loadDefaultCategoryId() -> String { loadConfig().defaultCategoryId }
 
 @available(iOS 16.0, *)
 private func enqueue(action: String, task: TaskEntity) {
@@ -69,13 +78,18 @@ struct TaskEntityQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [TaskEntity] {
     loadTasks().filter { identifiers.contains($0.id) }
   }
-  // Siri matches the spoken task name against the synced task list.
+  // Resolve the spoken text to exactly ONE entity so Siri never prompts:
+  // exact match → fuzzy contains → else a free-text entry under the default
+  // category. The title is whatever was spoken.
   func entities(matching string: String) async throws -> [TaskEntity] {
-    let q = string.lowercased()
-    return loadTasks().filter {
-      let t = $0.title.lowercased()
-      return t.contains(q) || q.contains(t)
+    let q = string.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lower = q.lowercased()
+    let all = loadTasks()
+    if let exact = all.first(where: { $0.title.lowercased() == lower }) { return [exact] }
+    if let part = all.first(where: { $0.title.lowercased().contains(lower) || lower.contains($0.title.lowercased()) }) {
+      return [part]
     }
+    return [TaskEntity(id: "free:\(lower)", title: q, categoryId: loadDefaultCategoryId())]
   }
   func suggestedEntities() async throws -> [TaskEntity] {
     loadTasks()

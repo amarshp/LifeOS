@@ -1,4 +1,4 @@
-import { View, Text, Pressable, StyleSheet, Animated, Alert } from 'react-native'
+import { View, Text, Pressable, StyleSheet, Animated, Alert, AppState } from 'react-native'
 import { Tabs, useFocusEffect, useRouter, usePathname } from 'expo-router'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { colors, fonts } from '../../src/theme/tokens'
@@ -60,6 +60,17 @@ export default function TabLayout() {
   useEffect(() => {
     reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
   }, [timer.running, nextPlanned])
+
+  // Apply queued Siri "track" commands whenever the app returns to foreground
+  // (a Siri command runs while the app is backgrounded).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        drainTrackQueue().then((n) => { if (n > 0) timer.refresh() }).catch(() => {})
+      }
+    })
+    return () => sub.remove()
+  }, [timer.refresh])
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)
