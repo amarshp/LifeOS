@@ -358,6 +358,12 @@ export default function DayScreen() {
   // Live pinch scale runs on the native thread (no per-frame React relayout);
   // the real zoom is committed once on gesture end.
   const pinchScale = useRef(new Animated.Value(1)).current
+  // Focal point (content-space y) held fixed during the pinch so the spot under
+  // the fingers doesn't drift: with top-anchored scaleY, translateY = F*(1 - s).
+  const pinchFocal = useRef(new Animated.Value(0)).current
+  const contentTranslateY = useRef(
+    Animated.multiply(pinchFocal, Animated.subtract(1, pinchScale))
+  ).current
   // Native-thread scroll offset — drives sticky block titles without re-renders.
   const scrollYAnim = useRef(new Animated.Value(0)).current
   const pendingScrollAfterZoomRef = useRef<number | null>(null)
@@ -377,6 +383,8 @@ export default function DayScreen() {
         pinchBaseZoomRef.current = zoomRef.current
         pinchFocalYRef.current = e.focalY
         pinchFocalOnRailRef.current = scrollYRef.current + e.focalY
+        pinchFocal.setValue(scrollYRef.current + e.focalY)
+        pinchScale.setValue(1)
       })
       .onUpdate((e) => {
         // Native-thread visual scale only — no setState, no relayout per frame.
@@ -1008,7 +1016,7 @@ export default function DayScreen() {
         scrollEventThrottle={8}
         onLayout={(e) => { viewportHRef.current = e.nativeEvent.layout.height }}
       >
-        <Animated.View style={{ height: timelineHeight + 14, transformOrigin: 'top', transform: [{ scaleY: pinchScale }] }}>
+        <Animated.View style={{ height: timelineHeight + 14, transformOrigin: 'top', transform: [{ translateY: contentTranslateY }, { scaleY: pinchScale }] }}>
         <View style={styles.timeline}>
           {/* Hour ticks */}
           <View style={[styles.hourCol, { height: timelineHeight + 14 }]}>
