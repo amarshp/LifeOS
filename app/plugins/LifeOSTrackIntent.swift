@@ -10,6 +10,8 @@ import Foundation
 struct TrackIntent: AppIntent {
   static var title: LocalizedStringResource = "Track a task"
   static var openAppWhenRun: Bool = false
+  // Run while locked without requiring Face ID / passcode.
+  static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
   @Parameter(title: "Task")
   var task: String
