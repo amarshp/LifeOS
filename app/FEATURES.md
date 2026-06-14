@@ -110,10 +110,38 @@
 - One-shot: "LifeOS \<title>" captures the whole tail as the entry title (e.g. "LifeOS commute to office"); "LifeOS stop \<title>" / "LifeOS parallel \<title>" route by leading keyword — best for short, non-navigation-like words (Apple's NL router hijacks map/web/message-like phrases)
 - Reliable two-step fallback: "New entry in LifeOS" → Siri asks "What are you tracking?" → dictate anything (captured as a parameter answer, immune to Siri domain routing)
 - start / stop / parallel are parsed from the spoken title in JS (`siriQueue.ts`) so routing keywords are tunable without a native rebuild
-- Commands run while locked, captured to a queue, applied on next foreground (backdated to when spoken, auto `review` tag); a valid category is resolved in-app (falls back to Misc/first) and the new entry shows immediately via a timer-change broadcast
+- Auto-categorize: the spoken title is matched (whole-word) against tag names → that tag's category + the tag is added; else against category names → that category; else native value; else falls back to Misc/first
+- Voice entries always get the `review` tag (may be mis-heard); commands run while locked, captured to a queue, applied on next foreground (backdated to when spoken) and the new entry shows immediately via a timer-change broadcast
+- Siri dismisses immediately after capture (no lingering "Got it" confirmation snippet)
 - Implemented via App Intents in the main target (config plugin `plugins/withTrackIntent.js` + `LifeOSTrackIntent.swift`)
+
+## Lock Screen / Shortcut quick-log (iOS)
+- The "New LifeOS entry" App Intent appears as a Shortcuts action → build a shortcut with the Task param set to "Ask Each Time" (text box) + optional "Open App", and pin it as a Lock Screen widget / Home Screen icon / Control Center control / Action button
+- Same enqueue→drain pipeline as Siri (backdated, `review` tag, auto-category)
 
 ## Auth
 - Email/password sign in & sign up via Supabase
 - "Continue with Google" on both screens — Supabase OAuth (PKCE) opened in an in-app browser, returns to the app via the `lifeos://auth-callback` deep link
 - New accounts auto-seed default categories if none exist
+
+---
+
+# Roadmap / Planned (NOT yet built)
+
+## No-app-open live sync (Siri + Lock Screen Shortcut) — TOP PRIORITY
+Goal: trigger Siri/Shortcut without opening or unlocking the app, and have it reflect **live** in BOTH:
+1. **Supabase DB** (other apps consume this data — can't wait for next app open), and
+2. the **iOS Live Activity** (Dynamic Island + Lock Screen).
+Why it's hard: a background App Intent does NOT boot React Native, so the intent itself must (a) write to Supabase over the network in Swift and (b) drive ActivityKit directly. Today it only enqueues and applies on next foreground.
+Planned design:
+- **Supabase RPC `track_from_voice(p_title, p_at)`** (SQL): parse stop/parallel, match category+tag, stop-previous, insert — runs as authed user (RLS + user_id automatic). Logic lives in SQL → updatable without an app build.
+- **RN writes the session** (access token + url + anon key) to a shared Documents file on auth change/refresh.
+- **Native App Intent**: read token → POST the RPC → on success update the Live Activity (reuse `expo-live-activity` `LiveActivityAttributes`, public init) and skip the queue; on failure fall back to the existing queue.
+- **RN on open**: adopt the intent-started Live Activity via a shared activity-id map (move it off AsyncStorage → Documents JSON) so reconcile doesn't create a duplicate.
+- **Token strategy (decision pending):** Option A (recommended) — native NEVER refreshes (avoids rotating/invalidating RN's session); uses the last access token RN saved; DB-live while session fresh, else queues; raise Supabase access-token TTL to widen the window. Option B — native refreshes too (truly live after long closures, but fragile).
+- Traps to handle: duplicate Live Activities, double-inserted rows (native-write vs queue-drain), offline, token expiry.
+- (Pending Codex architecture review for a possibly-better approach.)
+
+## Other deferred
+- Lock-screen / home quick-start buttons: top-N tasks by historic use at the current time (one-tap start), beyond the generic text-box shortcut.
+- Build pipeline: Codemagic `eas build --local` set up as the EAS-quota overflow valve (see repo `codemagic.yaml`).

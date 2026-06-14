@@ -117,9 +117,11 @@ struct TrackIntent: AppIntent {
   @Parameter(title: "Task")
   var task: TaskEntity
 
-  func perform() async throws -> some IntentResult & ProvidesDialog {
+  // No ProvidesDialog → Siri dismisses immediately instead of lingering 6-8s on
+  // a "Got it" snippet (annoying for a fire-and-forget logging action).
+  func perform() async throws -> some IntentResult {
     enqueue(title: task.title, categoryId: task.categoryId)
-    return .result(dialog: "Got it — \(task.title)")
+    return .result()
   }
 }
 
@@ -136,9 +138,9 @@ struct TrackDictateIntent: AppIntent {
   @Parameter(title: "Task", requestValueDialog: "What are you tracking?")
   var titleText: String
 
-  func perform() async throws -> some IntentResult & ProvidesDialog {
+  func perform() async throws -> some IntentResult {
     enqueue(title: titleText, categoryId: loadDefaultCategoryId())
-    return .result(dialog: "Got it — \(titleText)")
+    return .result()
   }
 }
 

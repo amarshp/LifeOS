@@ -1,7 +1,8 @@
 import { File, Paths } from 'expo-file-system'
-import type { Category, TimeEntry } from '../types/database'
+import type { Category, TimeEntry, Tag } from '../types/database'
 import * as timeEntries from '../services/time-entries'
 import * as categoriesService from '../services/categories'
+import * as tagsService from '../services/tags'
 
 // Bridge for the native Siri "track" intents (LifeOSTrackIntent.swift).
 // - syncQuickTasks: write the task options the AppEntity offers to Siri.
@@ -80,14 +81,42 @@ function readQueue(): TrackCommand[] {
   }
 }
 
-async function applyCommand(cmd: TrackCommand, running: TimeEntry[], categoryId: string): Promise<void> {
+// Whole-word match of `needle` inside `hay` (avoids "office" matching "officer").
+function tokenMatch(hay: string, needle: string): boolean {
+  if (!needle.trim()) return false
+  return ` ${hay.toLowerCase()} `.includes(` ${needle.toLowerCase()} `)
+}
+
+// Infer category + a tag from the spoken title:
+// tag name in title → that tag's category + the tag; else category name in title
+// → that category. Returns nulls when nothing matches.
+function inferFromTitle(
+  title: string,
+  categories: Category[],
+  tags: Tag[],
+): { categoryId: string | null; tagName: string | null } {
+  const tag = tags.find((t) => tokenMatch(title, t.name))
+  if (tag) return { categoryId: tag.category_id, tagName: tag.name }
+  const cat = categories.find((c) => tokenMatch(title, c.name))
+  if (cat) return { categoryId: cat.id, tagName: null }
+  return { categoryId: null, tagName: null }
+}
+
+async function applyCommand(
+  cmd: TrackCommand,
+  running: TimeEntry[],
+  categories: Category[],
+  tags: Tag[],
+  fallbackCatId: string | undefined,
+): Promise<void> {
   const at = new Date(cmd.at).toISOString()
   const { action, title } = parseTrack(cmd.title)
+  const inferred = inferFromTitle(title, categories, tags)
 
   if (action === 'stop') {
     const match =
       running.find((r) => r.title.toLowerCase() === title.toLowerCase()) ??
-      running.find((r) => r.category_id === categoryId) ??
+      (inferred.categoryId ? running.find((r) => r.category_id === inferred.categoryId) : undefined) ??
       (title.length === 0 ? running[0] : undefined) // bare "stop" → stop current
     if (match) await timeEntries.updateEntry(match.id, { is_running: false, end_time: at })
     return
@@ -100,12 +129,22 @@ async function applyCommand(cmd: TrackCommand, running: TimeEntry[], categoryId:
     }
   }
 
+  // Category precedence: title keyword/tag match → native value (if valid) → fallback.
+  const categoryId =
+    inferred.categoryId ??
+    (categories.some((c) => c.id === cmd.categoryId) ? cmd.categoryId : undefined) ??
+    fallbackCatId
+  if (!categoryId) throw new Error('no category available')
+
+  // Always tag voice entries `review` (may be mis-heard); add the matched tag too.
+  const tagList = inferred.tagName ? [REVIEW_TAG, inferred.tagName] : [REVIEW_TAG]
+
   // start + parallel both insert a new running entry (DB trigger caps at 2)
   await timeEntries.startTimer({
     category_id: categoryId,
     title,
     start_time: at,
-    tags: [REVIEW_TAG],
+    tags: tagList,
     notes: null,
   })
 }
@@ -125,18 +164,20 @@ export async function drainTrackQueue(): Promise<DrainResult> {
   // chronological, so sequential start/stop ordering is correct
   queue.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 
-  const categories = await categoriesService.getCategories().catch(() => [] as Category[])
-  const fallbackCat =
+  const [categories, tags] = await Promise.all([
+    categoriesService.getCategories().catch(() => [] as Category[]),
+    tagsService.getAllTags().catch(() => [] as Tag[]),
+  ])
+  const fallbackCatId = (
     categories.find((c) => ['misc', 'inbox', 'other'].includes(c.name.toLowerCase())) ?? categories[0]
+  )?.id
 
   let applied = 0
   const errors: string[] = []
   for (const cmd of queue) {
     try {
       const running = await timeEntries.getRunningTimers()
-      const categoryId = categories.some((c) => c.id === cmd.categoryId) ? cmd.categoryId : fallbackCat?.id
-      if (!categoryId) throw new Error('no category available')
-      await applyCommand(cmd, running, categoryId)
+      await applyCommand(cmd, running, categories, tags, fallbackCatId)
       applied += 1
     } catch (e) {
       errors.push(`"${cmd.title}": ${e instanceof Error ? e.message : String(e)}`)
