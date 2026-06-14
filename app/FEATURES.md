@@ -96,6 +96,11 @@
 ## Sheets
 - Bottom sheets share a draggable handle: drag it down to dismiss. Add/edit sheets save on drag-down; Settings editors (which auto-save) just close. Settings sheets use a clear "Done" button instead of a small ×
 
+## Live Activities (iOS)
+- Running timers appear on the Lock Screen + Dynamic Island, counting up live on-device (no push server) via expo-live-activity `elapsedTimer`
+- Shows entry title + category; reconciled from the running-timer set (starts on run, updates on change, stops on stop), supports parallel timers
+- iOS 16.2+ only; no-op on Android/web
+
 ## Auth
 - Email/password sign in & sign up via Supabase
 - "Continue with Google" on both screens — Supabase OAuth (PKCE) opened in an in-app browser, returns to the app via the `lifeos://auth-callback` deep link

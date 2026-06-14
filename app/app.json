@@ -31,7 +31,8 @@
       "expo-router",
       "expo-secure-store",
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-live-activity"
     ],
     "extra": {
       "router": {},

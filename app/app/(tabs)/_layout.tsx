@@ -6,6 +6,7 @@ import { HomeIcon, DayIcon, WeekIcon, InsightsIcon, SettingsIcon, NumberIcon } f
 import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
+import { reconcileLiveActivities } from '../../src/lib/liveActivity'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
 import { toLocalDateStr } from '../../src/lib/date'
@@ -27,6 +28,14 @@ export default function TabLayout() {
   const currentEntry = timer.running[0]
   const currentCat = currentEntry ? categories.find(c => c.id === currentEntry.category_id) : undefined
   const runningCount = timer.running.length
+
+  // Sync running timers -> iOS Live Activities (Dynamic Island + Lock Screen).
+  // Single instance: this tab root mounts once.
+  useEffect(() => {
+    const nameById: Record<string, string> = {}
+    for (const c of categories) nameById[c.id] = c.name
+    reconcileLiveActivities(timer.running, nameById).catch(() => {})
+  }, [timer.running, categories])
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)
