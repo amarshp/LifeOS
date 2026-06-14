@@ -95,3 +95,8 @@
 
 ## Sheets
 - Bottom sheets share a draggable handle: drag it down to dismiss. Add/edit sheets save on drag-down; Settings editors (which auto-save) just close. Settings sheets use a clear "Done" button instead of a small ×
+
+## Auth
+- Email/password sign in & sign up via Supabase
+- "Continue with Google" on both screens — Supabase OAuth (PKCE) opened in an in-app browser, returns to the app via the `lifeos://auth-callback` deep link
+- New accounts auto-seed default categories if none exist

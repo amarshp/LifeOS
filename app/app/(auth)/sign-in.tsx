@@ -14,10 +14,11 @@ import { useAuth } from '../../src/contexts/AuthContext'
 import { colors, fonts } from '../../src/theme/tokens'
 
 export default function SignInScreen() {
-  const { signIn } = useAuth()
+  const { signIn, signInWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
 
   async function handleSignIn() {
     if (!email || !password) return
@@ -29,6 +30,18 @@ export default function SignInScreen() {
       Alert.alert('Error', message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleGoogle() {
+    setGoogleLoading(true)
+    try {
+      await signInWithGoogle()
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Google sign in failed'
+      Alert.alert('Error', message)
+    } finally {
+      setGoogleLoading(false)
     }
   }
 
@@ -62,6 +75,22 @@ export default function SignInScreen() {
         <Pressable style={styles.button} onPress={handleSignIn} disabled={loading}>
           <Text style={styles.buttonText}>
             {loading ? 'Signing in…' : 'Sign in'}
+          </Text>
+        </Pressable>
+
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>OR</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <Pressable
+          style={styles.googleButton}
+          onPress={handleGoogle}
+          disabled={googleLoading}
+        >
+          <Text style={styles.googleButtonText}>
+            {googleLoading ? 'Connecting…' : 'Continue with Google'}
           </Text>
         </Pressable>
 
@@ -110,6 +139,36 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: colors.bg,
+    fontWeight: '400',
+    fontSize: 11,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    fontFamily: fonts.ui,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 16,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: {
+    color: colors.text4,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    marginHorizontal: 12,
+    fontFamily: fonts.ui,
+  },
+  googleButton: {
+    backgroundColor: colors.surface2,
+    borderRadius: 999,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  googleButtonText: {
+    color: colors.text1,
     fontWeight: '400',
     fontSize: 11,
     letterSpacing: 1.5,

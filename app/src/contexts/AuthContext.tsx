@@ -1,7 +1,14 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
+import { makeRedirectUri } from 'expo-auth-session'
+import * as QueryParams from 'expo-auth-session/build/QueryParams'
+import * as WebBrowser from 'expo-web-browser'
 import { supabase } from '../lib/supabase'
 import * as categoriesService from '../services/categories'
+
+WebBrowser.maybeCompleteAuthSession()
+
+const redirectTo = makeRedirectUri({ path: 'auth-callback' })
 
 interface AuthState {
   session: Session | null
@@ -12,7 +19,20 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string) => Promise<void>
+  signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
+}
+
+// Seed starter categories if the account has none (covers RLS/trigger gaps).
+async function seedDefaultsIfEmpty(): Promise<void> {
+  try {
+    const cats = await categoriesService.getCategories()
+    if (cats.length === 0) {
+      await supabase.rpc('seed_default_categories', {
+        p_user_id: (await supabase.auth.getUser()).data.user?.id ?? '',
+      })
+    }
+  } catch {}
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -41,28 +61,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signIn(email: string, password: string): Promise<void> {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
-    try {
-      const cats = await categoriesService.getCategories()
-      if (cats.length === 0) {
-        await supabase.rpc('seed_default_categories', {
-          p_user_id: (await supabase.auth.getUser()).data.user?.id ?? '',
-        })
-      }
-    } catch {}
+    await seedDefaultsIfEmpty()
   }
 
   async function signUp(email: string, password: string): Promise<void> {
     const { error } = await supabase.auth.signUp({ email, password })
     if (error) throw error
-    // Fallback: seed default categories if the DB trigger didn't fire (RLS context issue)
-    try {
-      const cats = await categoriesService.getCategories()
-      if (cats.length === 0) {
-        await supabase.rpc('seed_default_categories', {
-          p_user_id: (await supabase.auth.getUser()).data.user?.id ?? '',
-        })
-      }
-    } catch {}
+    await seedDefaultsIfEmpty()
+  }
+
+  async function signInWithGoogle(): Promise<void> {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo, skipBrowserRedirect: true },
+    })
+    if (error) throw error
+    if (!data.url) throw new Error('Could not start Google sign in')
+
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo)
+    if (result.type !== 'success') return // user cancelled / dismissed
+
+    const { params, errorCode } = QueryParams.getQueryParams(result.url)
+    if (errorCode) throw new Error(errorCode)
+
+    const { code } = params
+    if (!code) throw new Error('Google sign in did not return an auth code')
+
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+    if (exchangeError) throw exchangeError
+    await seedDefaultsIfEmpty()
   }
 
   async function signOut(): Promise<void> {
@@ -71,7 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ ...state, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ ...state, signIn, signUp, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   )

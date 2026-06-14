@@ -9,7 +9,10 @@
     "scheme": "lifeos",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.pedapatiamarsh.lifeos"
+      "bundleIdentifier": "com.pedapatiamarsh.lifeos",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,7 +30,8 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "router": {},
