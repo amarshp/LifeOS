@@ -7,9 +7,10 @@ import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
+import * as timeEntriesService from '../../src/services/time-entries'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
+import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
 import { todayStr } from '../../src/lib/date'
-import { File, Paths } from 'expo-file-system'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
 import { toLocalDateStr } from '../../src/lib/date'
@@ -25,7 +26,15 @@ export default function TabLayout() {
   const [stoppingEntryId, setStoppingEntryId] = useState<string | null>(null)
 
   useFocusEffect(useCallback(() => {
-    categoriesService.getCategories().then(setCategories).catch(() => {})
+    Promise.all([
+      categoriesService.getCategories(),
+      timeEntriesService.getRecentEntries(20),
+    ])
+      .then(([cats, recent]) => {
+        setCategories(cats)
+        syncQuickTasks(cats, recent) // give Siri the task names to match
+      })
+      .catch(() => {})
     calendarBlocksService.getEffectiveBlocksForDate(todayStr())
       .then((blocks) => {
         const nowMs = Date.now()
@@ -34,6 +43,10 @@ export default function TabLayout() {
           .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
         setNextPlanned(next ? { title: next.title, startMs: new Date(next.start_time).getTime() } : null)
       })
+      .catch(() => {})
+    // Apply any Siri "track" commands captured while locked.
+    drainTrackQueue()
+      .then((n) => { if (n > 0) timer.refresh() })
       .catch(() => {})
     timer.refresh()
   }, [timer.refresh]))
@@ -47,20 +60,6 @@ export default function TabLayout() {
   useEffect(() => {
     reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
   }, [timer.running, nextPlanned])
-
-  // SPIKE: surface any task captured by the Siri "track" intent while locked.
-  useFocusEffect(useCallback(() => {
-    ;(async () => {
-      try {
-        const f = new File(Paths.document, 'lifeos_track.json')
-        if (f.exists) {
-          const data = JSON.parse(await f.text()) as { task?: string; at?: string }
-          f.delete()
-          Alert.alert('Siri spike ✓', `Captured "${data.task}" at ${data.at} (while locked)`)
-        }
-      } catch {}
-    })()
-  }, []))
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)

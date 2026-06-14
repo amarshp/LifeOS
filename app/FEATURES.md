@@ -106,6 +106,12 @@
 - Library SwiftUI customized via a config plugin (`plugins/withLiveActivityStopButton.js`) that injects the button/dot at prebuild (reliable on EAS, unlike postinstall)
 - iOS 16.2+ only; no-op on Android/web
 
+## Siri / Voice (iOS)
+- "Track \<task> in LifeOS" (stop current, start), "Track parallel \<task> in LifeOS", "Track stop \<task> in LifeOS" — run while locked, no unlock
+- Task name matches your categories + recent task titles (synced to a native AppEntity); arbitrary free text isn't supported (Apple requires a known entity)
+- Commands are captured to a queue while locked and applied (backdated to when spoken, auto `review` tag) when the app is next opened; Siri speaks a confirmation
+- Implemented via App Intents in the main target (config plugin `plugins/withTrackIntent.js` + `LifeOSTrackIntent.swift`)
+
 ## Auth
 - Email/password sign in & sign up via Supabase
 - "Continue with Google" on both screens — Supabase OAuth (PKCE) opened in an in-app browser, returns to the app via the `lifeos://auth-callback` deep link
