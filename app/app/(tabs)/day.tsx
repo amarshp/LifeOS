@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   View,
   Text,
@@ -46,6 +46,16 @@ function formatHour12(h: number): string {
 }
 const MIN_ZOOM = 0.3
 const MAX_ZOOM = 8
+// Discrete pinch levels. Pinch snaps to the nearest; setZoom fires only on a
+// level change → ~2-4 relayouts per gesture instead of ~60. Crisp, no stretch.
+const ZOOM_LEVELS = [0.4, 0.6, 0.85, 1, 1.35, 1.8, 2.4, 3, 4, 5.5, 8]
+function snapZoom(z: number): number {
+  let best = ZOOM_LEVELS[0]
+  for (const lvl of ZOOM_LEVELS) {
+    if (Math.abs(lvl - z) < Math.abs(best - z)) best = lvl
+  }
+  return best
+}
 const INITIAL_WINDOW_DAYS = 2
 const EXTEND_WINDOW_DAYS = 3
 const MIN_EDGE_LOAD_PX = 220
@@ -198,7 +208,7 @@ interface DraggableItemProps {
   colRight?: DimensionValue
 }
 
-function DraggableItem({
+const DraggableItem = memo(function DraggableItem({
   id, startTime, endTime, title,
   bgColor, titleColor, subColor, subText, tagsText,
   plannedColor,
@@ -283,7 +293,7 @@ function DraggableItem({
       </View>
     </GestureDetector>
   )
-}
+})
 
 function isDateInRange(date: string, startDate: string, endDate: string): boolean {
   return dateOffset(startDate, date) >= 0 && dateOffset(date, endDate) >= 0
@@ -318,6 +328,10 @@ export default function DayScreen() {
   const [zoom, setZoom] = useState(1)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState(0)
+  // Bumped on scroll-band change / layout / programmatic scroll to re-render the
+  // visible tick slice (ticks are virtualized to the viewport ± one screen).
+  const [, setTickRenderTick] = useState(0)
+  const scrollBandRef = useRef(-1)
   const scrollYRef = useRef(0)
   const railWidthRef = useRef(0)
   const zoomRef = useRef(1)
@@ -327,9 +341,6 @@ export default function DayScreen() {
   const pinchFocalOnRailRef = useRef(0)
   const pinchFocalYRef = useRef(0)
   const isPinchingRef = useRef(false)
-  const frameRequestRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null)
-  const pendingZoomRef = useRef(1)
-  const pendingScrollRef = useRef(0)
   const pendingScrollAfterZoomRef = useRef<number | null>(null)
   const pendingPrependPxRef = useRef(0)
   const pendingScrollTargetRef = useRef<ScrollTarget | null>(null)
@@ -349,39 +360,33 @@ export default function DayScreen() {
         pinchFocalOnRailRef.current = scrollYRef.current + e.focalY
       })
       .onUpdate((e) => {
+        // Quantize to discrete levels: relayout only when the level changes, so
+        // a pinch fires ~2-4 commits instead of ~60. No stretch, always crisp.
         const liveZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinchBaseZoomRef.current * e.scale))
-        const s = liveZoom / pinchBaseZoomRef.current
+        const snapped = snapZoom(liveZoom)
+        if (snapped === zoomRef.current) return
+        const s = snapped / pinchBaseZoomRef.current
         const dayCount = Math.max(1, dateOffset(windowStartDate, windowEndDate) + 1)
-        const maxScroll = Math.max(0, BASE_RAIL_HEIGHT * visibleHours / 24 * liveZoom * dayCount + 14 - viewportHRef.current)
+        const maxScroll = Math.max(0, BASE_RAIL_HEIGHT * visibleHours / 24 * snapped * dayCount + 14 - viewportHRef.current)
         const newScroll = Math.max(0, Math.min(pinchFocalOnRailRef.current * s - pinchFocalYRef.current, maxScroll))
-        pendingZoomRef.current = liveZoom
-        pendingScrollRef.current = newScroll
-        if (frameRequestRef.current === null) {
-          frameRequestRef.current = requestAnimationFrame(() => {
-            frameRequestRef.current = null
-            const z = pendingZoomRef.current
-            const sc = pendingScrollRef.current
-            pendingScrollAfterZoomRef.current = sc
-            scrollYRef.current = sc
-            setZoom(z)
-          })
-        }
+        pendingScrollAfterZoomRef.current = newScroll
+        scrollYRef.current = newScroll
+        setZoom(snapped)
       })
       .onEnd((e) => {
-        if (frameRequestRef.current !== null) {
-          cancelAnimationFrame(frameRequestRef.current)
-          frameRequestRef.current = null
-        }
-        const finalZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinchBaseZoomRef.current * e.scale))
+        const finalZoom = snapZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinchBaseZoomRef.current * e.scale)))
         const s = finalZoom / pinchBaseZoomRef.current
-        const rawScroll = pinchFocalOnRailRef.current * s - pinchFocalYRef.current
         const dayCount = Math.max(1, dateOffset(windowStartDate, windowEndDate) + 1)
         const maxScroll = Math.max(0, BASE_RAIL_HEIGHT * visibleHours / 24 * finalZoom * dayCount + 14 - viewportHRef.current)
-        const newScroll = Math.max(0, Math.min(rawScroll, maxScroll))
+        const newScroll = Math.max(0, Math.min(pinchFocalOnRailRef.current * s - pinchFocalYRef.current, maxScroll))
         scrollYRef.current = newScroll
-        scrollRef.current?.scrollTo({ y: newScroll, animated: false })
         isPinchingRef.current = false
-        setZoom(finalZoom)
+        if (finalZoom !== zoomRef.current) {
+          pendingScrollAfterZoomRef.current = newScroll
+          setZoom(finalZoom)
+        } else {
+          scrollRef.current?.scrollTo({ y: newScroll, animated: false })
+        }
       })
   }, [windowStartDate, windowEndDate, visibleHours])
 
@@ -417,11 +422,26 @@ export default function DayScreen() {
   const pxPerHour = railHeight / visibleHours
   const windowDates = useMemo(() => listDates(windowStartDate, windowEndDate), [windowStartDate, windowEndDate])
   const timelineHeight = windowDates.length * railHeight
-  const hourToPx = (time: string) => {
+  const hourToPx = useCallback((time: string) => {
     const itemDate = toLocalDateStr(new Date(time))
     return dateOffset(windowStartDate, itemDate) * railHeight + hourToPxWithHeight(time, railHeight, effectiveStart, effectiveEnd)
-  }
+  }, [windowStartDate, railHeight, effectiveStart, effectiveEnd])
   const timelineTicks = useMemo(() => createTimelineTicks(effectiveStart, effectiveEnd, zoom), [effectiveStart, effectiveEnd, zoom])
+
+  // Tick virtualization: only render grid lines / labels within the viewport ±
+  // one screen. Re-evaluated each render; setTickRenderTick forces a render when
+  // the user scrolls a band, so the slice stays current without per-frame state.
+  const vhForCull = viewportHRef.current || 800
+  const cullTop = scrollYRef.current - vhForCull
+  const cullBottom = scrollYRef.current + vhForCull * 2
+  const isDayVisible = (dayIndex: number): boolean => {
+    const dayTop = dayIndex * railHeight
+    return dayTop < cullBottom && dayTop + railHeight > cullTop
+  }
+  const isTickVisible = (dayIndex: number, topPct: number): boolean => {
+    const top = dayIndex * railHeight + topPct * railHeight
+    return top >= cullTop && top <= cullBottom
+  }
 
   const getCenteredMinute = useCallback(() => {
     const centerY = scrollYRef.current + Math.max(0, viewportHRef.current / 2)
@@ -437,6 +457,7 @@ export default function DayScreen() {
     const y = Math.max(0, Math.min(baseY - (target.center ? viewportHRef.current / 2 : 0), maxScroll))
     scrollRef.current?.scrollTo({ y, animated })
     scrollYRef.current = y
+    setTickRenderTick(t => t + 1)
     return true
   }, [pxPerHour, railHeight, timelineHeight, windowEndDate, windowStartDate, effectiveStart])
 
@@ -456,6 +477,7 @@ export default function DayScreen() {
     extendingTopRef.current = false
     scrollYRef.current = nextY
     scrollRef.current?.scrollTo({ y: nextY, animated: false })
+    setTickRenderTick(t => t + 1)
   }, [windowStartDate, railHeight])
 
   const loadData = useCallback(async () => {
@@ -899,6 +921,14 @@ export default function DayScreen() {
   const handleTimelineScroll = useCallback((y: number) => {
     if (isPinchingRef.current) return
     scrollYRef.current = y
+    // Re-render the visible tick slice once per ~half-screen of scroll (the
+    // buffer is ±1 full screen, so the rendered ticks always cover the viewport).
+    const bandPx = Math.max(120, (viewportHRef.current || 800) * 0.4)
+    const band = Math.round(y / bandPx)
+    if (band !== scrollBandRef.current) {
+      scrollBandRef.current = band
+      setTickRenderTick(t => t + 1)
+    }
     const edgeLoadPx = Math.max(
       MIN_EDGE_LOAD_PX,
       Math.min(railHeight * 0.25, viewportHRef.current * 0.5)
@@ -990,13 +1020,14 @@ export default function DayScreen() {
           handleTimelineScroll(e.nativeEvent.contentOffset.y)
         }}
         scrollEventThrottle={8}
-        onLayout={(e) => { viewportHRef.current = e.nativeEvent.layout.height }}
+        onLayout={(e) => { viewportHRef.current = e.nativeEvent.layout.height; setTickRenderTick(t => t + 1) }}
       >
         <View style={{ height: timelineHeight + 14 }}>
         <View style={styles.timeline}>
           {/* Hour ticks */}
           <View style={[styles.hourCol, { height: timelineHeight + 14 }]}>
             {windowDates.map((day, dayIndex) => (
+              isDayVisible(dayIndex) ? (
               <View key={`label-day-${day}`}>
                 <Text style={[styles.dayBoundaryLabel, { top: dayIndex * railHeight + 4, color: tc.text3 }]}>
                   {dateAtLocalMinutes(day, 0).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
@@ -1004,6 +1035,7 @@ export default function DayScreen() {
                 </Text>
                 {timelineTicks.map(tick => {
                   if (!tick.showLabel) return null
+                  if (!isTickVisible(dayIndex, tick.topPct)) return null
                   return (
                     <Text
                       key={`label-${day}-${tick.minutes}`}
@@ -1014,6 +1046,7 @@ export default function DayScreen() {
                   )
                 })}
               </View>
+              ) : null
             ))}
           </View>
 
@@ -1024,6 +1057,7 @@ export default function DayScreen() {
             onLayout={(event) => { railWidthRef.current = event.nativeEvent.layout.width }}
           >
             {windowDates.map((day, dayIndex) => (
+              isDayVisible(dayIndex) ? (
               <View key={`grid-day-${day}`}>
                 <View style={[styles.dayBoundaryLine, { top: dayIndex * railHeight, backgroundColor: tc.text2 }]} />
                 {hideSleep && dayIndex > 0 && (
@@ -1032,6 +1066,7 @@ export default function DayScreen() {
                   </Text>
                 )}
                 {timelineTicks.map(tick => (
+                  isTickVisible(dayIndex, tick.topPct) ? (
                   <View
                     key={`grid-${day}-${tick.minutes}`}
                     style={[
@@ -1043,8 +1078,10 @@ export default function DayScreen() {
                       },
                     ]}
                   />
+                  ) : null
                 ))}
               </View>
+              ) : null
             ))}
 
             {/* Planned blocks — full width when alone, left half when an actual entry overlaps */}

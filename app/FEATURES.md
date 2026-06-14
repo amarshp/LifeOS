@@ -57,7 +57,7 @@
 - Tap any entry or block to edit it inline (time, category, tags, name)
 - Tap a gap in the timeline to log a past entry for that time slot
 - Navigate between days by swiping or tapping the date header
-- Pinch-to-zoom with wider range (0.3×–8×) for fine-grained or panoramic views
+- Pinch-to-zoom with wider range (0.3×–8×) for fine-grained or panoramic views; pinch snaps to discrete levels so it stays crisp (no stretch) and relayouts only on level change for smooth framerate
 - Hide sleep: toggle in Settings collapses the sleep window (configurable bedtime / wake time, default 11 PM–7 AM) out of the timeline so only waking hours are shown; per-hour pixel density stays constant
 
 ## Week View

@@ -91,8 +91,12 @@ struct TaskEntityQuery: EntityStringQuery {
     }
     return [TaskEntity(id: "free:\(lower)", title: q, categoryId: loadDefaultCategoryId())]
   }
+  // Return [] so Siri accepts dictated free text (e.g. "track sleep") and routes
+  // it to entities(matching:) — which resolves to a single entry — instead of
+  // showing a "which one?" disambiguation list of every task. (Apple: empty
+  // suggestions enables dictation capture for the phrase parameter.)
   func suggestedEntities() async throws -> [TaskEntity] {
-    loadTasks()
+    []
   }
 }
 
@@ -150,19 +154,31 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
   static var appShortcuts: [AppShortcut] {
     AppShortcut(
       intent: TrackIntent(),
-      phrases: ["Track \(\.$task) in \(.applicationName)"],
+      phrases: [
+        "Track \(\.$task) in \(.applicationName)",
+        "Track \(\.$task) on \(.applicationName)",
+        "\(.applicationName) track \(\.$task)",
+      ],
       shortTitle: "Track",
       systemImageName: "record.circle"
     )
     AppShortcut(
       intent: TrackParallelIntent(),
-      phrases: ["Track parallel \(\.$task) in \(.applicationName)"],
+      phrases: [
+        "Track parallel \(\.$task) in \(.applicationName)",
+        "Track parallel \(\.$task) on \(.applicationName)",
+        "\(.applicationName) track parallel \(\.$task)",
+      ],
       shortTitle: "Track parallel",
       systemImageName: "plus.circle"
     )
     AppShortcut(
       intent: TrackStopIntent(),
-      phrases: ["Track stop \(\.$task) in \(.applicationName)"],
+      phrases: [
+        "Track stop \(\.$task) in \(.applicationName)",
+        "Track stop \(\.$task) on \(.applicationName)",
+        "\(.applicationName) track stop \(\.$task)",
+      ],
       shortTitle: "Track stop",
       systemImageName: "stop.circle"
     )
