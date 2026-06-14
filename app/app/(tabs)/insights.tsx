@@ -4,6 +4,8 @@ import {
 } from 'react-native'
 import Svg, { Circle } from 'react-native-svg'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useFocusEffect } from 'expo-router'
+import { subscribeTimerChange } from '../../src/lib/timer-events'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
 import { todayStr } from '../../src/lib/date'
@@ -453,6 +455,15 @@ export default function InsightsScreen() {
   }, [])
 
   useEffect(() => { setLoading(true); void loadData() }, [loadData])
+  // Refresh on tab focus so the running task's elapsed time is current, and when
+  // any timer starts/stops. Also re-stamp `now` each minute so a running task
+  // keeps accruing in the totals while the screen is open.
+  useFocusEffect(useCallback(() => { void loadData() }, [loadData]))
+  useEffect(() => subscribeTimerChange(() => { void loadData() }), [loadData])
+  useEffect(() => {
+    const id = setInterval(() => setNowTs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
   const onRefresh = useCallback(() => { setRefreshing(true); void loadData() }, [loadData])
 
   const data: InsightsComputed | null = useMemo(() => {
