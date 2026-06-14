@@ -42,17 +42,39 @@ Why this is the right spine:
 5. **Widget (WidgetKit, iOS 17+ interactive):** Home-Screen medium widget ≈ **4 buttons**; lock-screen accessory ≈ **1–2** (tiny). Buttons = `Button(intent: StartTaskIntent(...))`, labels/colors from App Group.
 6. **Siri / App Shortcuts:** the real "pick any task without unlocking" — voice, works locked.
 
+## Siri command grammar (trigger word: "track")
+Resolve a spoken task string + a leading modifier word into one of three actions. RN matches the spoken text to a category/recent-title by keyword (fuzzy, case-insensitive); for "stop", match against currently *running* timers.
+
+| Phrase | Action | Rule |
+|---|---|---|
+| "track \<task>" | start, auto-stop previous | single mode |
+| "track parallel \<task>" | start alongside | no stop; reject if already 2 running (DB trigger enforces max 2) |
+| "track stop \<task>" | stop the running timer whose title matches \<task> | others keep running |
+
+- **Every "track" start adds a `review` tag** (Siri entries are quick capture → review later).
+- Likely 3 AppShortcut phrasings → 3 intents (`TrackIntent`, `TrackParallelIntent`, `TrackStopIntent`), each with a free-form String `@Parameter`. Keyword→task matching happens in RN on queue drain (native stays dumb).
+- Running timers + categories are synced RN→App Group so "stop \<name>" matching has data (even though resolution happens on open in the local-queue model).
+
+## Live Activity content requirements
+- **Parallel:** show both running timers (max 2). Current `reconcileLiveActivities` already starts one activity per running entry — likely works; verify with 2.
+- **Next planned task:** show the next upcoming `calendar_block` today — **name + when / how-long-until** it starts. No tags, names only.
+- These are **app-driven content** (RN sets Live Activity state). Putting "next: \<name> in \<2h>" into the activity subtitle is JS-only; a distinct styled row would need a widget-layout change (native, rebuild).
+
 ## Reuse (don't rebuild)
 - `getCategoryUsageNearHour` — top tasks (RN).
 - `start_timer_stop_previous` RPC — RN replays the queue through it (backdated).
 - `reconcileLiveActivities` — Live Activity sync on open.
 
 ## Phased plan
-- **Phase 0 — SPIKE (one build, do first).** Prove the single true unknown: *does a background App Intent run while the phone is locked without forcing Face ID?* Build ONE hardcoded `StartNamedTaskIntent` + `AppShortcutsProvider` whose `perform()` only writes a timestamp to the App Group. EAS build → "Hey Siri, start X" while locked → open app, confirm the timestamp landed. If yes, approach proven. If no, we stop before investing.
-- **Phase A — Siri capture (local queue).** RN↔App Group sync + queue drain + `StartNamedTaskIntent` real (categoryId/title). "Hey Siri, start Gym in LifeOS" while locked → entry recorded (synced on open).
+- **Phase 1 — Live status content (quick, JS-mostly, do now).** Verify 2 parallel render; add next-planned task (name + countdown) to the activity. No Siri, no new native target. Fast win the user asked for.
+- **Phase 0 — SPIKE (one build, do before any Siri work).** Prove the single true unknown: *does a background App Intent run while the phone is locked without forcing Face ID?* ONE hardcoded `TrackIntent` + `AppShortcutsProvider` whose `perform()` only writes a timestamp to the App Group. EAS build → "track test" to Siri while locked → open app, confirm the timestamp landed. If yes, approach proven. If no, stop.
+- **Phase A — Siri capture (local queue).** RN↔App Group sync (running timers + categories) + queue drain + the 3 intents (`TrackIntent`/`TrackParallelIntent`/`TrackStopIntent`) with keyword matching + auto `review` tag. Commands recorded while locked; **live status updates on next app open** (local-queue model).
 - **Phase B — Quick-start buttons.** Home widget (4) + lock accessory (1–2) + `StartTaskIntent`/`RepeatLastTaskIntent`.
-- **Phase C — Live status while locked (optional, hardest).** Native Live Activity *start* from the intent so the count-up shows before opening the app (needs the `ActivityAttributes` type — fork/extend expo-live-activity or own widget). Still no native Supabase.
-- **Phase D — (only if ever needed) instant server write.** Native Supabase + shared Keychain token + refresh-rotation handling. Not recommended unless multi-device sync demands it.
+- **Phase C — Live status changes WHILE locked (hardest, optional).** Native drives Live Activities from the intent so "track stop commute" / "track parallel X" reflect on the locked screen immediately (needs the `ActivityAttributes` type — fork/extend expo-live-activity or own widget). Still no native Supabase.
+- **Phase D — (only if ever needed) instant server write.** Native Supabase + shared Keychain token + refresh-rotation handling. Not recommended for single-device.
+
+### Decision that gates scope
+Do Siri commands need to update the **locked screen immediately** (Phase C), or is "recorded now, live status refreshes when you open the app" (Phase A) acceptable? A→ much smaller; C→ the big native bet.
 
 ## Risks / to confirm
 - **R1 (spike answers this):** background intent executes while locked without Face ID; `authenticationPolicy` and Siri parameter-resolution-while-locked behavior — **to be confirmed empirically by Phase 0**, not assumed.
