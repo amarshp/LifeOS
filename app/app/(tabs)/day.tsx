@@ -327,9 +327,9 @@ export default function DayScreen() {
   const pinchFocalOnRailRef = useRef(0)
   const pinchFocalYRef = useRef(0)
   const isPinchingRef = useRef(false)
-  const frameRequestRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null)
-  const pendingZoomRef = useRef(1)
-  const pendingScrollRef = useRef(0)
+  // Live pinch scale runs on the native thread (no per-frame React relayout);
+  // the real zoom is committed once on gesture end.
+  const pinchScale = useRef(new Animated.Value(1)).current
   const pendingScrollAfterZoomRef = useRef<number | null>(null)
   const pendingPrependPxRef = useRef(0)
   const pendingScrollTargetRef = useRef<ScrollTarget | null>(null)
@@ -349,29 +349,11 @@ export default function DayScreen() {
         pinchFocalOnRailRef.current = scrollYRef.current + e.focalY
       })
       .onUpdate((e) => {
+        // Native-thread visual scale only — no setState, no relayout per frame.
         const liveZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinchBaseZoomRef.current * e.scale))
-        const s = liveZoom / pinchBaseZoomRef.current
-        const dayCount = Math.max(1, dateOffset(windowStartDate, windowEndDate) + 1)
-        const maxScroll = Math.max(0, BASE_RAIL_HEIGHT * visibleHours / 24 * liveZoom * dayCount + 14 - viewportHRef.current)
-        const newScroll = Math.max(0, Math.min(pinchFocalOnRailRef.current * s - pinchFocalYRef.current, maxScroll))
-        pendingZoomRef.current = liveZoom
-        pendingScrollRef.current = newScroll
-        if (frameRequestRef.current === null) {
-          frameRequestRef.current = requestAnimationFrame(() => {
-            frameRequestRef.current = null
-            const z = pendingZoomRef.current
-            const sc = pendingScrollRef.current
-            pendingScrollAfterZoomRef.current = sc
-            scrollYRef.current = sc
-            setZoom(z)
-          })
-        }
+        pinchScale.setValue(liveZoom / pinchBaseZoomRef.current)
       })
       .onEnd((e) => {
-        if (frameRequestRef.current !== null) {
-          cancelAnimationFrame(frameRequestRef.current)
-          frameRequestRef.current = null
-        }
         const finalZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, pinchBaseZoomRef.current * e.scale))
         const s = finalZoom / pinchBaseZoomRef.current
         const rawScroll = pinchFocalOnRailRef.current * s - pinchFocalYRef.current
@@ -379,13 +361,16 @@ export default function DayScreen() {
         const maxScroll = Math.max(0, BASE_RAIL_HEIGHT * visibleHours / 24 * finalZoom * dayCount + 14 - viewportHRef.current)
         const newScroll = Math.max(0, Math.min(rawScroll, maxScroll))
         scrollYRef.current = newScroll
-        scrollRef.current?.scrollTo({ y: newScroll, animated: false })
+        pendingScrollAfterZoomRef.current = newScroll
         isPinchingRef.current = false
         setZoom(finalZoom)
       })
   }, [windowStartDate, windowEndDate, visibleHours])
 
   useLayoutEffect(() => {
+    // Real zoom now applied — drop the transient pinch scale (before paint, so
+    // no flash) and land the focal-preserving scroll at the new layout.
+    pinchScale.setValue(1)
     if (pendingScrollAfterZoomRef.current !== null) {
       const sc = pendingScrollAfterZoomRef.current
       pendingScrollAfterZoomRef.current = null
@@ -992,7 +977,7 @@ export default function DayScreen() {
         scrollEventThrottle={8}
         onLayout={(e) => { viewportHRef.current = e.nativeEvent.layout.height }}
       >
-        <View style={{ height: timelineHeight + 14 }}>
+        <Animated.View style={{ height: timelineHeight + 14, transformOrigin: 'top', transform: [{ scaleY: pinchScale }] }}>
         <View style={styles.timeline}>
           {/* Hour ticks */}
           <View style={[styles.hourCol, { height: timelineHeight + 14 }]}>
@@ -1196,7 +1181,7 @@ export default function DayScreen() {
           </View>
           </GestureDetector>
         </View>
-        </View>
+        </Animated.View>
       </ScrollView>
       </View>
       </GestureDetector>
