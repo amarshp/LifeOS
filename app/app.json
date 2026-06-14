@@ -32,6 +32,7 @@
       "expo-secure-store",
       "expo-font",
       "expo-web-browser",
+      "./plugins/withLiveActivityStopButton",
       "expo-live-activity"
     ],
     "extra": {
