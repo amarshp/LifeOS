@@ -30,15 +30,16 @@ const STOP_BUTTON_MEDIUM_TO = `        }.layoutPriority(1)
         if let link = attributes.deepLinkUrl, let url = URL(string: link) {
           Spacer(minLength: 8)
           Link(destination: url) {
-            Text("STOP")
-              .font(.caption)
-              .fontWeight(.bold)
-              .foregroundStyle(.white)
-              .padding(.horizontal, 18)
-              .padding(.vertical, 11)
-              .background(Color(red: 0.78, green: 0.06, blue: 0.18))
-              .clipShape(Capsule())
+            ZStack {
+              Circle()
+                .fill(Color(red: 0.78, green: 0.06, blue: 0.18))
+                .frame(width: 46, height: 46)
+              RoundedRectangle(cornerRadius: 3)
+                .fill(Color.white)
+                .frame(width: 16, height: 16)
+            }
           }
+          .buttonStyle(.plain)
         }
       }`
 
@@ -79,15 +80,16 @@ const DI_STOP_TO = `        DynamicIslandExpandedRegion(.trailing) {
               .applyWidgetURL(from: context.attributes.deepLinkUrl)
           } else if let link = context.attributes.deepLinkUrl, let url = URL(string: link) {
             Link(destination: url) {
-              Text("STOP")
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color(red: 0.78, green: 0.06, blue: 0.18))
-                .clipShape(Capsule())
+              ZStack {
+                Circle()
+                  .fill(Color(red: 0.78, green: 0.06, blue: 0.18))
+                  .frame(width: 40, height: 40)
+                RoundedRectangle(cornerRadius: 3)
+                  .fill(Color.white)
+                  .frame(width: 14, height: 14)
+              }
             }
+            .buttonStyle(.plain)
             .padding(.trailing, 5)
           }
         }`
