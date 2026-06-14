@@ -1,0 +1,4 @@
+# Keep LF for files consumed by the Linux EAS build (patch-package + native sources)
+*.patch text eol=lf
+*.swift text eol=lf
+*.pbxproj text eol=lf
