@@ -33,6 +33,7 @@
       "expo-font",
       "expo-web-browser",
       "./plugins/withLiveActivityStopButton",
+      "./plugins/withTrackIntent",
       "expo-live-activity"
     ],
     "extra": {

@@ -9,6 +9,7 @@ import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
 import { todayStr } from '../../src/lib/date'
+import { File, Paths } from 'expo-file-system'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
 import { toLocalDateStr } from '../../src/lib/date'
@@ -46,6 +47,20 @@ export default function TabLayout() {
   useEffect(() => {
     reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
   }, [timer.running, nextPlanned])
+
+  // SPIKE: surface any task captured by the Siri "track" intent while locked.
+  useFocusEffect(useCallback(() => {
+    ;(async () => {
+      try {
+        const f = new File(Paths.document, 'lifeos_track.json')
+        if (f.exists) {
+          const data = JSON.parse(await f.text()) as { task?: string; at?: string }
+          f.delete()
+          Alert.alert('Siri spike ✓', `Captured "${data.task}" at ${data.at} (while locked)`)
+        }
+      } catch {}
+    })()
+  }, []))
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)
