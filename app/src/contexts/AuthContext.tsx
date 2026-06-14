@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { makeRedirectUri } from 'expo-auth-session'
-import * as QueryParams from 'expo-auth-session/build/QueryParams'
+import * as Linking from 'expo-linking'
 import * as WebBrowser from 'expo-web-browser'
 import { supabase } from '../lib/supabase'
 import * as categoriesService from '../services/categories'
@@ -81,11 +81,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo)
     if (result.type !== 'success') return // user cancelled / dismissed
 
-    const { params, errorCode } = QueryParams.getQueryParams(result.url)
-    if (errorCode) throw new Error(errorCode)
+    const { queryParams } = Linking.parse(result.url)
+    const errorCode = queryParams?.error_code
+    if (errorCode) throw new Error(String(errorCode))
 
-    const { code } = params
-    if (!code) throw new Error('Google sign in did not return an auth code')
+    const code = queryParams?.code
+    if (typeof code !== 'string') throw new Error('Google sign in did not return an auth code')
 
     const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
     if (exchangeError) throw exchangeError
