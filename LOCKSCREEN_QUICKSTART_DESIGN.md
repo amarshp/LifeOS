@@ -78,6 +78,7 @@ Do Siri commands need to update the **locked screen immediately** (Phase C), or 
 
 ## Risks / to confirm
 - **R1 (spike answers this):** background intent executes while locked without Face ID; `authenticationPolicy` and Siri parameter-resolution-while-locked behavior — **to be confirmed empirically by Phase 0**, not assumed.
+- **R1b (CONFIRMED by failed build):** App Shortcut phrase parameters MUST be `AppEntity`/`AppEnum`, **not free `String`**. So "track \<arbitrary text>" by voice is NOT possible — the task must resolve to a known entity (the user's categories/recent tasks exposed as an `AppEntity` with a query). Phase A must build a `TaskEntity`. Spike is parameterless ("Track in LifeOS").
 - **R2:** lock-screen widget button count is small (~2); home widget fits 4. Set expectations.
 - **R3:** intent background budget is a few seconds — local write only (the whole reason we avoid native network).
 - **R4:** native build is blind on Windows (~15–20 min/iteration) — stage tightly; Phase 0 is the cheap proof.

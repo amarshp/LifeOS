@@ -2,9 +2,10 @@ import AppIntents
 import Foundation
 
 // SPIKE: prove an App Intent runs in the background while the phone is locked,
-// triggered by Siri ("Track <task> in LifeOS"), without unlocking. perform()
-// writes the spoken task + timestamp to the app's Documents dir; RN reads it
-// back on next foreground to confirm the background execution happened.
+// triggered by Siri, without unlocking. Parameterless on purpose — App Shortcut
+// phrase parameters must be AppEntity/AppEnum, not free text (that's Phase A).
+// perform() writes a timestamp to the app's Documents dir; RN reads it back on
+// next foreground to confirm the background execution happened while locked.
 
 @available(iOS 16.0, *)
 struct TrackIntent: AppIntent {
@@ -13,15 +14,9 @@ struct TrackIntent: AppIntent {
   // Run while locked without requiring Face ID / passcode.
   static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
-  @Parameter(title: "Task")
-  var task: String
-
-  init() {}
-  init(task: String) { self.task = task }
-
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let payload: [String: Any] = [
-      "task": task,
+      "task": "siri test",
       "at": ISO8601DateFormatter().string(from: Date()),
     ]
     if let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
@@ -30,7 +25,7 @@ struct TrackIntent: AppIntent {
         try? data.write(to: url, options: .atomic)
       }
     }
-    return .result(dialog: "Tracking \(task)")
+    return .result(dialog: "Tracked")
   }
 }
 
@@ -40,8 +35,8 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
     AppShortcut(
       intent: TrackIntent(),
       phrases: [
-        "Track \(\.$task) in \(.applicationName)",
-        "\(.applicationName) track \(\.$task)",
+        "Track in \(.applicationName)",
+        "\(.applicationName) track",
       ],
       shortTitle: "Track",
       systemImageName: "record.circle"
