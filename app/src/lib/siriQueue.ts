@@ -18,10 +18,27 @@ interface QuickTask {
 }
 
 interface TrackCommand {
-  action: 'start' | 'parallel' | 'stop'
+  action: string // always "track" now; real action parsed from the title
   categoryId: string
   title: string
   at: string // ISO8601
+}
+
+// Native captures the whole spoken tail as the title. Derive the action from a
+// leading keyword here (JS = tunable without a native rebuild).
+const STOP_PREFIXES = ['stop ', 'end ', 'finish ']
+const PARALLEL_PREFIXES = ['parallel ', 'also ', 'and ']
+
+function parseTrack(rawTitle: string): { action: 'start' | 'parallel' | 'stop'; title: string } {
+  const t = rawTitle.trim()
+  const lower = t.toLowerCase()
+  for (const p of STOP_PREFIXES) {
+    if (lower.startsWith(p)) return { action: 'stop', title: t.slice(p.length).trim() }
+  }
+  for (const p of PARALLEL_PREFIXES) {
+    if (lower.startsWith(p)) return { action: 'parallel', title: t.slice(p.length).trim() }
+  }
+  return { action: 'start', title: t }
 }
 
 // Categories + recent distinct titles → the names Siri can match. Also a
@@ -64,15 +81,18 @@ function readQueue(): TrackCommand[] {
 
 async function applyCommand(cmd: TrackCommand, running: TimeEntry[]): Promise<void> {
   const at = new Date(cmd.at).toISOString()
-  if (cmd.action === 'stop') {
+  const { action, title } = parseTrack(cmd.title)
+
+  if (action === 'stop') {
     const match =
+      running.find((r) => r.title.toLowerCase() === title.toLowerCase()) ??
       running.find((r) => r.category_id === cmd.categoryId) ??
-      running.find((r) => r.title.toLowerCase() === cmd.title.toLowerCase())
+      (title.length === 0 ? running[0] : undefined) // bare "stop" → stop current
     if (match) await timeEntries.updateEntry(match.id, { is_running: false, end_time: at })
     return
   }
 
-  if (cmd.action === 'start') {
+  if (action === 'start') {
     // stop everything currently running, backdated to the spoken time
     for (const r of running) {
       await timeEntries.updateEntry(r.id, { is_running: false, end_time: at })
@@ -82,7 +102,7 @@ async function applyCommand(cmd: TrackCommand, running: TimeEntry[]): Promise<vo
   // start + parallel both insert a new running entry (DB trigger caps at 2)
   await timeEntries.startTimer({
     category_id: cmd.categoryId,
-    title: cmd.title,
+    title,
     start_time: at,
     tags: [REVIEW_TAG],
     notes: null,

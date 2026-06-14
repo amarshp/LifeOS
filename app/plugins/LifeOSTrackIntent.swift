@@ -41,17 +41,19 @@ private func loadTasks() -> [TaskEntity] { loadConfig().tasks }
 private func loadDefaultCategoryId() -> String { loadConfig().defaultCategoryId }
 
 @available(iOS 16.0, *)
-private func enqueue(action: String, task: TaskEntity) {
+private func enqueue(title: String, categoryId: String) {
   guard let url = documentsURL("lifeos_track_queue.json") else { return }
   var queue: [[String: Any]] = []
   if let data = try? Data(contentsOf: url),
      let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
     queue = arr
   }
+  // Action (start / stop / parallel) is parsed from the title on the JS side, so
+  // it can be tuned with a JS reload instead of a native rebuild.
   queue.append([
-    "action": action,
-    "categoryId": task.categoryId,
-    "title": task.title,
+    "action": "track",
+    "categoryId": categoryId,
+    "title": title,
     "at": ISO8601DateFormatter().string(from: Date()),
   ])
   if let data = try? JSONSerialization.data(withJSONObject: queue, options: []) {
@@ -102,6 +104,10 @@ struct TaskEntityQuery: EntityStringQuery {
 
 // MARK: - Intents
 
+// Single one-shot intent: "LifeOS <title>" captures the whole tail as the title.
+// start / stop / parallel are derived from the title by the JS drain (keyword
+// prefix: "stop …", "parallel …", "also …"), so routing is tunable without a
+// native rebuild and there is no cross-phrase collision.
 @available(iOS 16.0, *)
 struct TrackIntent: AppIntent {
   static var title: LocalizedStringResource = "Track a task"
@@ -112,38 +118,27 @@ struct TrackIntent: AppIntent {
   var task: TaskEntity
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
-    enqueue(action: "start", task: task)
-    return .result(dialog: "Tracking \(task.title)")
+    enqueue(title: task.title, categoryId: task.categoryId)
+    return .result(dialog: "Got it — \(task.title)")
   }
 }
 
+// Reliable two-step fallback. Trigger "New entry in LifeOS" has the app name at
+// the END so it can't collide with the greedy "LifeOS <task>" phrase. Siri asks
+// via requestValueDialog and captures arbitrary dictation as a plain String —
+// the one mechanism Apple guarantees for open-ended text.
 @available(iOS 16.0, *)
-struct TrackParallelIntent: AppIntent {
-  static var title: LocalizedStringResource = "Track a parallel task"
+struct TrackDictateIntent: AppIntent {
+  static var title: LocalizedStringResource = "New LifeOS entry"
   static var openAppWhenRun: Bool = false
   static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
-  @Parameter(title: "Task")
-  var task: TaskEntity
+  @Parameter(title: "Task", requestValueDialog: "What are you tracking?")
+  var titleText: String
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
-    enqueue(action: "parallel", task: task)
-    return .result(dialog: "Tracking \(task.title) in parallel")
-  }
-}
-
-@available(iOS 16.0, *)
-struct TrackStopIntent: AppIntent {
-  static var title: LocalizedStringResource = "Stop tracking a task"
-  static var openAppWhenRun: Bool = false
-  static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
-
-  @Parameter(title: "Task")
-  var task: TaskEntity
-
-  func perform() async throws -> some IntentResult & ProvidesDialog {
-    enqueue(action: "stop", task: task)
-    return .result(dialog: "Stopping \(task.title)")
+    enqueue(title: titleText, categoryId: loadDefaultCategoryId())
+    return .result(dialog: "Got it — \(titleText)")
   }
 }
 
@@ -155,32 +150,24 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
     AppShortcut(
       intent: TrackIntent(),
       phrases: [
+        // "LifeOS Commute to movie" — everything after the app name is the title
+        // (free text via empty suggestedEntities). Say "LifeOS stop sleep" /
+        // "LifeOS parallel gym" and the JS drain routes by the leading keyword.
+        "\(.applicationName) \(\.$task)",
         "Track \(\.$task) in \(.applicationName)",
         "Track \(\.$task) on \(.applicationName)",
-        "\(.applicationName) track \(\.$task)",
       ],
       shortTitle: "Track",
       systemImageName: "record.circle"
     )
     AppShortcut(
-      intent: TrackParallelIntent(),
+      intent: TrackDictateIntent(),
       phrases: [
-        "Track parallel \(\.$task) in \(.applicationName)",
-        "Track parallel \(\.$task) on \(.applicationName)",
-        "\(.applicationName) track parallel \(\.$task)",
+        "New entry in \(.applicationName)",
+        "Log in \(.applicationName)",
       ],
-      shortTitle: "Track parallel",
-      systemImageName: "plus.circle"
-    )
-    AppShortcut(
-      intent: TrackStopIntent(),
-      phrases: [
-        "Track stop \(\.$task) in \(.applicationName)",
-        "Track stop \(\.$task) on \(.applicationName)",
-        "\(.applicationName) track stop \(\.$task)",
-      ],
-      shortTitle: "Track stop",
-      systemImageName: "stop.circle"
+      shortTitle: "New entry",
+      systemImageName: "mic.circle"
     )
   }
 }
