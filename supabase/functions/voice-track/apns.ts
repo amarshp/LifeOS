@@ -79,7 +79,9 @@ export async function sendPushToStart(p: StartPush): Promise<number> {
       timestamp: Math.floor(Date.now() / 1000),
       'attributes-type': 'LiveActivityAttributes',
       attributes: {
-        name: 'ExpoLiveActivity',
+        // name carries the entry id so the native stop intent can find + end
+        // THIS activity (Activity.activities matched by attributes.name).
+        name: p.entryId,
         backgroundColor: '#0A0A0A',
         titleColor: '#FFFFFF',
         subtitleColor: '#9CA3AF',

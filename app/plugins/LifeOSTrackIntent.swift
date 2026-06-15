@@ -9,12 +9,14 @@ import ExpoLiveActivity
 // App Intents run in the app process in the background (even while locked) but do
 // NOT boot React Native. So the intent itself:
 //   1. POSTs to the Supabase `voice-track` Edge Function (authed by a per-device
-//      secret RN stored in lifeos_voice_cred.json) → DB is written LIVE.
-//   2. Drives ActivityKit directly (expo-live-activity's now-public
-//      LiveActivityAttributes) → Lock Screen / Dynamic Island update LIVE, app closed.
+//      secret RN stored in lifeos_voice_cred.json) → DB is written LIVE, and the
+//      function fires an APNs push-to-start → Lock Screen / Dynamic Island appears
+//      (iOS forbids STARTING a Live Activity from a background intent; push is the
+//      only way). Each activity's attributes.name is set to the entry id.
+//   2. For STOP, the intent ENDS the matching activity locally (allowed in the
+//      background) by matching Activity.activities on attributes.name == entry id.
 //   3. On network failure, falls back to the local queue (RN applies on next open).
-// The activity id is written to lifeos_la_map.json so RN adopts it on next open
-// (no duplicates). Task options for the Shortcuts UI come from lifeos_quick_tasks.json.
+// Task options for the Shortcuts UI come from lifeos_quick_tasks.json.
 
 // MARK: - Shared file helpers
 
@@ -102,82 +104,34 @@ private func enqueueFallback(commandId: String, title: String, at: String) {
 
 // MARK: - Live Activity (ActivityKit, shared expo-live-activity attributes)
 
-@available(iOS 16.0, *)
-private func saveActivityId(entryId: String, activityId: String) {
-  guard !entryId.isEmpty, let url = documentsURL("lifeos_la_map.json") else { return }
-  var map: [String: String] = [:]
-  if let data = try? Data(contentsOf: url),
-     let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
-    map = obj
-  }
-  map[entryId] = activityId
-  if let data = try? JSONSerialization.data(withJSONObject: map, options: []) {
-    try? data.write(to: url, options: .atomic)
-  }
-}
-
-@available(iOS 16.0, *)
-private func mappedActivityId(_ entryId: String) -> String? {
-  guard let url = documentsURL("lifeos_la_map.json"),
-        let data = try? Data(contentsOf: url),
-        let map = try? JSONSerialization.jsonObject(with: data) as? [String: String]
-  else { return nil }
-  return map[entryId]
-}
-
-private func isoToMs(_ s: String?) -> Double? {
-  guard let s = s else { return nil }
-  let f1 = ISO8601DateFormatter()
-  f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  if let d = f1.date(from: s) { return d.timeIntervalSince1970 * 1000 }
-  let f2 = ISO8601DateFormatter()
-  if let d = f2.date(from: s) { return d.timeIntervalSince1970 * 1000 }
-  return nil
-}
-
 @available(iOS 16.2, *)
 private func applyLiveActivity(_ result: [String: Any]) async {
 #if canImport(ActivityKit)
   guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
   let action = result["action"] as? String ?? "start"
   let entryId = result["entry_id"] as? String ?? ""
-  let title = result["title"] as? String ?? ""
   let running = (result["is_running"] as? Bool) ?? true
 
-  // stop (or idempotent replay of an already-stopped entry) → end the mapped activity
+  // The Live Activity is STARTED by the voice-track Edge Function via APNs
+  // push-to-start — iOS forbids Activity.request from a background intent.
+  // Here we only END activities, which IS allowed from a background intent,
+  // matching by attributes.name (set to the entry id in the push payload).
+
+  // stop (or idempotent replay of an already-stopped entry) → end that activity.
   if action == "stop" || !running {
-    if let aid = mappedActivityId(entryId) {
-      for act in Activity<LiveActivityAttributes>.activities where act.id == aid {
-        await act.end(nil, dismissalPolicy: .immediate)
-      }
+    for act in Activity<LiveActivityAttributes>.activities where act.attributes.name == entryId {
+      await act.end(nil, dismissalPolicy: .immediate)
     }
     return
   }
 
-  // start ends existing activities; parallel leaves them running
+  // start stops the previous entry server-side → end every activity EXCEPT the
+  // new one (push-to-start creates that asynchronously; ending all would race
+  // and kill the just-started card). parallel leaves the others running.
   if action == "start" {
-    for act in Activity<LiveActivityAttributes>.activities {
+    for act in Activity<LiveActivityAttributes>.activities where act.attributes.name != entryId {
       await act.end(nil, dismissalPolicy: .immediate)
     }
-  }
-
-  let startMs = isoToMs(result["start_time"] as? String) ?? (Date().timeIntervalSince1970 * 1000)
-  let attrs = LiveActivityAttributes(
-    name: "ExpoLiveActivity",
-    backgroundColor: "#0A0A0A",
-    titleColor: "#FFFFFF",
-    subtitleColor: "#9CA3AF",
-    progressViewTint: "#C8102E",
-    progressViewLabelColor: "#FFFFFF",
-    deepLinkUrl: "lifeos://stop-start?entry=\(entryId)",
-    timerType: .digital
-  )
-  let state = LiveActivityAttributes.ContentState(
-    title: title,
-    elapsedTimerStartDateInMilliseconds: startMs
-  )
-  if let act = try? Activity.request(attributes: attrs, content: .init(state: state, staleDate: nil)) {
-    saveActivityId(entryId: entryId, activityId: act.id)
   }
 #endif
 }

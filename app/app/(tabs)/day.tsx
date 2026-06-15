@@ -1246,6 +1246,7 @@ export default function DayScreen() {
         blocks={entrySheetBlocks}
         savedTags={savedTags}
         tagUsage={tagUsage}
+        runningCount={timer.running.length}
         lastStopTime={lastStoppedEntry?.end_time ?? null}
         viewDate={entrySheetViewDate}
         initialMode={entrySheetInitialMode}
@@ -1412,6 +1413,7 @@ interface AddEntrySheetProps {
   blocks: CalendarBlock[]
   savedTags: Tag[]
   tagUsage: TagUsage[]
+  runningCount: number
   lastStopTime: string | null
   viewDate: string
   initialMode: 'timer' | 'past' | 'plan'
@@ -1423,7 +1425,7 @@ interface AddEntrySheetProps {
   onCategoryCreated: (cat: Category) => void | Promise<void>
 }
 
-function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, lastStopTime, viewDate, initialMode, initialLogPastRange, onClose, onStart, onSaveCompleted, onSavePlan, onCategoryCreated }: AddEntrySheetProps) {
+function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runningCount, lastStopTime, viewDate, initialMode, initialLogPastRange, onClose, onStart, onSaveCompleted, onSavePlan, onCategoryCreated }: AddEntrySheetProps) {
   const { reduceMotion, colors: tc } = useSettings()
   const [mode, setMode] = useState<'timer' | 'past' | 'plan'>('timer')
   const [planRecurrence, setPlanRecurrence] = useState('none')
@@ -1754,7 +1756,9 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, lastS
     Keyboard.dismiss()
     try {
       await tagsService.ensureTagsForCategory(effectiveCat, allTags)
-      await onStart(effectiveCat, effectiveTitle, allTags, parallel, startTime, notes.trim() || null)
+      // Hard cap: never attempt a parallel start when 2 are already running
+      // (the DB trigger would reject it). A normal start stops both instead.
+      await onStart(effectiveCat, effectiveTitle, allTags, runningCount >= 2 ? false : parallel, startTime, notes.trim() || null)
       setTitle('')
       setTitleIsAuto(true)
       setTags([])
@@ -2030,15 +2034,21 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, lastS
                     </Pressable>
                   )}
                 </View>
-                <Pressable
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}
-                  onPress={() => setParallel(p => !p)}
-                >
-                  <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: parallel ? tc.text1 : tc.text4, backgroundColor: parallel ? tc.text1 : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                    {parallel && <Text style={{ color: tc.bg, fontSize: 12, fontWeight: '700' }}>✓</Text>}
-                  </View>
-                  <Text style={{ color: tc.text2, fontSize: 13, fontFamily: fonts.ui }}>Run alongside current timer</Text>
-                </Pressable>
+                {runningCount >= 2 ? (
+                  <Text style={{ color: tc.text4, fontSize: 12.5, fontFamily: fonts.ui, marginTop: 16, lineHeight: 18 }}>
+                    Max 2 parallel timers running — starting a new one will stop both.
+                  </Text>
+                ) : (
+                  <Pressable
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}
+                    onPress={() => setParallel(p => !p)}
+                  >
+                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: parallel ? tc.text1 : tc.text4, backgroundColor: parallel ? tc.text1 : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                      {parallel && <Text style={{ color: tc.bg, fontSize: 12, fontWeight: '700' }}>✓</Text>}
+                    </View>
+                    <Text style={{ color: tc.text2, fontSize: 13, fontFamily: fonts.ui }}>Run alongside current timer</Text>
+                  </Pressable>
+                )}
               </>
             )}
     </SheetShell>

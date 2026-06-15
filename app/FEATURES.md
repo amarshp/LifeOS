@@ -146,8 +146,17 @@ Recommended design (post Codex review — "Correct V1"):
 - **Simpler "Fast V1" alternative** (if we want least work first): native reads the last RN-saved JWT + same Edge Function/SQL + local ActivityKit + idempotent fallback — but it's only live while the JWT is fresh (app opened within token TTL). Codex recommends going straight to Correct V1.
 - APNs Live Activity push deferred (needs push tokens + provider setup); local ActivityKit is simpler/deterministic for same-device Siri starts.
 
-### APNs push-to-start (instant Dynamic Island, app closed) — Build #1 DONE 2026-06-15
-> iOS blocks `Activity.request` from a background App Intent, so the only way to START a Live Activity while the app is closed is an APNs push-to-start (iOS 17.2+; device is iOS 26+). Build #1 goal — **prove the push-to-start token lands in Supabase — PASSED** (device `2f5505e5…`, 160-char token stored on `voice_credentials.push_to_start_token`). Credential gotcha that cost 2 builds: the dev (internal/ad-hoc) profile must be regenerated *after* Push is enabled on the App ID; EAS served a stale pre-entitlement profile until it was deleted + recreated while logged into Apple.
+### APNs push-to-start (instant Dynamic Island, app closed) — WORKING 2026-06-15/16
+> iOS blocks `Activity.request` from a background App Intent, so START while app-closed = APNs push-to-start (iOS 17.2+; device iOS 26+). **Proven end-to-end**: Siri (app closed) → `voice-track` Edge Function writes the DB entry AND fires an APNs push-to-start → Dynamic Island / Lock Screen appears, in sync with the DB. (APNs host = production `api.push.apple.com`; EAS ad-hoc export rewrites aps-environment to production. App must be backgrounded-not-killed.)
+> - **Dedup on open**: `reconcileLiveActivities` skips entries with a `command_id` (voice = push-managed) so opening the app never duplicates the card.
+> - **Stop (app-closed)**: the native intent ENDS the activity locally (allowed in background) by matching `Activity.activities` on `attributes.name == entry_id`. No push tokens needed. (Push payload sets `name = entry_id`.)
+> - **Tap behavior**: card BODY → `lifeos://home` (opens Home); red STOP button → `lifeos://stop-start?entry=…` (stops + opens new-task sheet). Split done in the widget (body taps use `applyWidgetURL`; stop button uses `Link(URL(string:))`).
+> - Credential gotcha (cost 2 builds): the dev (internal/ad-hoc) profile must be **deleted + recreated** while logged into Apple *after* Push is enabled on the App ID; EAS served a stale pre-entitlement profile otherwise.
+> - DEFERRED: 2 timers in ONE Live Activity for the Dynamic Island (see `DUAL_TASK_PLAN.md`).
+
+### Dual-task (parallel timers, max 2) — 2026-06-16
+- Hard cap of 2 running timers enforced by DB trigger `enforce_max_running_timers` (all paths). Start sheet now hides the "Run alongside" toggle at 2 running and explains it; submit can't attempt a 3rd.
+- Home (`test3.tsx`): 2 running tasks render as an `A | B` split (equal halves + divider), each with its own live timer; 1 task keeps the full-width centre stage.
 - expo-live-activity `enablePushNotifications: true` → sets `aps-environment=development` + Info.plist `ExpoLiveActivity_EnablePushNotifications=true` (native then observes `pushToStartTokenUpdates`).
 - RN `pushToStartToken.ts`: `addActivityPushToStartTokenListener` → `set_push_to_start_token(device_id, token)` RPC → stored on `voice_credentials.push_to_start_token` (migration `20260615_002`).
 - Prereq done: Push capability enabled on App ID `com.pedapatiamarsh.lifeos` + dev profile regenerated via `eas credentials`.

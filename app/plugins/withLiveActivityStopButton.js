@@ -94,6 +94,22 @@ const DI_STOP_TO = `        DynamicIslandExpandedRegion(.trailing) {
           }
         }`
 
+// Split the tap targets: the card BODY (and Dynamic Island regions) open the
+// app on Home (lifeos://home), while the red STOP button keeps its own
+// stop-start deep link. The stop buttons use `Link(destination: URL(string:))`,
+// NOT applyWidgetURL, so rewriting every `applyWidgetURL(from: deepLinkUrl)` to
+// a constant "home" path touches only body taps, never the stop button.
+// (applyWidgetURL prepends the scheme, so it takes a PATH: "home" -> lifeos://home)
+const BODY_URL_FROM = '.applyWidgetURL(from: context.attributes.deepLinkUrl)'
+const BODY_URL_TO = '.applyWidgetURL(from: "home")'
+
+function splitTapTargets(file) {
+  let src = fs.readFileSync(file, 'utf8')
+  if (!src.includes(BODY_URL_FROM)) return // already split (or anchor changed)
+  src = src.split(BODY_URL_FROM).join(BODY_URL_TO)
+  fs.writeFileSync(file, src)
+}
+
 function patchFile(file, edits) {
   let src = fs.readFileSync(file, 'utf8')
   if (src.includes(MARKER)) return // already patched
@@ -119,5 +135,7 @@ module.exports = function withLiveActivityStopButton(config) {
     [COMPACT_DOT_FROM, COMPACT_DOT_TO],
     [DI_STOP_FROM, DI_STOP_TO],
   ])
+  // After the stop buttons are added, redirect all body taps to Home.
+  splitTapTargets(path.join(iosFiles, 'LiveActivityWidget.swift'))
   return config
 }

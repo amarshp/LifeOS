@@ -56,11 +56,29 @@ export default function Test3Screen() {
 
         {/* Centre stage */}
         {currentEntry ? (
-          <>
-            {running.length > 1 && (
-              <Text style={[styles.runCount, { color: tc.text3 }]}>{running.length} running</Text>
-            )}
-            {/* Tap the live task to open it in edit mode (#5) */}
+          secondEntry ? (
+            /* Two parallel tasks → A | B split (equal halves, divider between) */
+            <View style={styles.splitRow}>
+              <Pressable onPress={() => openEntry(currentEntry.id)} hitSlop={8} style={styles.splitStage}>
+                <Text style={[styles.splitTimer, { color: tc.text1 }]} numberOfLines={1} adjustsFontSizeToFit>{formatElapsed(elapsed)}</Text>
+                <View style={styles.catRow}>
+                  <Animated.View style={[styles.dot, { backgroundColor: currentCategory?.color ?? tc.text3, transform: [{ scale: pulseAnim }] }]} />
+                  <Text style={[styles.splitTask, { color: tc.text1 }]} numberOfLines={1}>{currentEntry.title}</Text>
+                </View>
+                <Text style={[styles.taskMeta, { color: tc.text3 }]} numberOfLines={1}>{currentCategory?.name?.toUpperCase()}</Text>
+              </Pressable>
+              <View style={[styles.splitDivider, { backgroundColor: tc.border }]} />
+              <Pressable onPress={() => openEntry(secondEntry.id)} hitSlop={8} style={styles.splitStage}>
+                <Text style={[styles.splitTimer, { color: tc.text1 }]} numberOfLines={1} adjustsFontSizeToFit>{formatElapsed(timer.elapsed[secondEntry.id] ?? 0)}</Text>
+                <View style={styles.catRow}>
+                  <Animated.View style={[styles.dot, { backgroundColor: secondCategory?.color ?? tc.text3, transform: [{ scale: pulseAnim }] }]} />
+                  <Text style={[styles.splitTask, { color: tc.text1 }]} numberOfLines={1}>{secondEntry.title}</Text>
+                </View>
+                <Text style={[styles.taskMeta, { color: tc.text3 }]} numberOfLines={1}>{secondCategory?.name?.toUpperCase()}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            /* Single live task → full-width centre stage. Tap to open in edit mode (#5) */
             <Pressable onPress={() => openEntry(currentEntry.id)} hitSlop={8} style={styles.stage}>
               <Text style={[styles.timer, { color: tc.text1 }]}>{formatElapsed(elapsed)}</Text>
               <View style={styles.catRow}>
@@ -71,15 +89,7 @@ export default function Test3Screen() {
                 {currentCategory?.name?.toUpperCase()}
               </Text>
             </Pressable>
-            {/* Second parallel task (#4) */}
-            {secondEntry && (
-              <Pressable onPress={() => openEntry(secondEntry.id)} hitSlop={8} style={[styles.secondLine, { borderColor: tc.border }]}>
-                <View style={[styles.dot, { backgroundColor: secondCategory?.color ?? tc.text3 }]} />
-                <Text style={[styles.secondText, { color: tc.text2 }]} numberOfLines={1}>{secondEntry.title}</Text>
-                <Text style={[styles.secondTime, { color: tc.text3 }]}>{formatElapsed(timer.elapsed[secondEntry.id] ?? 0)}</Text>
-              </Pressable>
-            )}
-          </>
+          )
         ) : (
           <>
             <Text style={[styles.timerIdle, { color: tc.text4 }]}>idle</Text>
@@ -196,13 +206,16 @@ const styles = StyleSheet.create({
   dot: { width: 7, height: 7, borderRadius: 3.5 },
   catName: { fontSize: 12, letterSpacing: 2.5, fontFamily: fonts.ui, fontWeight: '600' },
 
-  runCount: { fontSize: 10.5, letterSpacing: 2, fontFamily: fonts.ui, fontWeight: '600', textTransform: 'uppercase', marginBottom: 14 },
   stage: { alignItems: 'center' },
   taskName: { fontSize: 19, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: -0.2, maxWidth: 300 },
   taskMeta: { fontSize: 11, letterSpacing: 1.5, fontFamily: fonts.ui, fontWeight: '500', marginTop: 8 },
-  secondLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 22, paddingTop: 16, borderTopWidth: 1, minWidth: 210 },
-  secondText: { fontSize: 13.5, fontFamily: fonts.ui, maxWidth: 150 },
-  secondTime: { fontSize: 12.5, fontFamily: fonts.mono, fontVariant: ['tabular-nums'] },
+
+  // Two parallel tasks: A | B split (equal halves with a vertical divider)
+  splitRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', alignSelf: 'stretch' },
+  splitStage: { flex: 1, alignItems: 'center', paddingHorizontal: 6 },
+  splitTimer: { fontSize: 40, lineHeight: 46, letterSpacing: -1.5, fontFamily: fonts.displayBold, fontVariant: ['tabular-nums'], maxWidth: '100%' },
+  splitTask: { fontSize: 15, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: -0.2, maxWidth: 130 },
+  splitDivider: { width: 1, alignSelf: 'stretch', minHeight: 96, marginHorizontal: 6 },
 
   dayLineWrap: { width: '100%', alignItems: 'center', marginTop: 48 },
   dayLine: { width: '100%', height: 3, borderRadius: 1.5, position: 'relative' },
