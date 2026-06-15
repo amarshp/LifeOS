@@ -129,6 +129,7 @@
 # Roadmap / Planned (NOT yet built)
 
 ## No-app-open live sync (Siri + Lock Screen Shortcut) — TOP PRIORITY
+> STATUS 2026-06-15: **Backend DEPLOYED + verified** (migration `20260615_001_voice_track.sql` applied; Edge Function `voice-track` deployed `--no-verify-jwt`; start/idempotent/stop functionally tested). RN code (credential registration, RPC-fallback drain, LA adoption) **pushed**. Native intent (Swift POST + ActivityKit) **pushed** — needs **one Codemagic build** to ship, then on-device test. Key risk to verify on device: starting a Live Activity from a background App Intent (DB write succeeds regardless; LA falls back to next app-open if iOS blocks background-start).
 Goal: trigger Siri/Shortcut without opening or unlocking the app, and have it reflect **live** in BOTH:
 1. **Supabase DB** (other apps consume this data — can't wait for next app open), and
 2. the **iOS Live Activity** (Dynamic Island + Lock Screen).
