@@ -11,6 +11,7 @@ import * as timeEntriesService from '../../src/services/time-entries'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
 import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
 import { ensureVoiceCredential } from '../../src/lib/voiceCredential'
+import { registerPushToStartToken } from '../../src/lib/pushToStartToken'
 import { emitTimerChange } from '../../src/lib/timer-events'
 import { todayStr } from '../../src/lib/date'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -65,7 +66,9 @@ export default function TabLayout() {
       .catch(() => {})
     // Ensure the device has a voice credential so Siri/Shortcut can write to
     // Supabase directly while the app is closed.
-    void ensureVoiceCredential()
+    // After the credential exists, register the APNs push-to-start token so the
+    // server can start a Live Activity while the app is closed.
+    void ensureVoiceCredential().then(() => registerPushToStartToken())
     // Apply any Siri "track" commands captured while locked (fallback path).
     void drainAndReport()
     timer.refresh()

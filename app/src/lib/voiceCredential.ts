@@ -72,6 +72,11 @@ export async function ensureVoiceCredential(): Promise<void> {
   }
 }
 
+// Device id of the current local credential (for the push-to-start token row).
+export function getVoiceDeviceId(): string | null {
+  return readLocal()?.deviceId ?? null
+}
+
 // Revoke on sign-out so a shared device can't keep logging to the old account.
 export async function revokeVoiceCredential(): Promise<void> {
   const local = readLocal()
