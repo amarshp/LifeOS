@@ -129,7 +129,7 @@
 # Roadmap / Planned (NOT yet built)
 
 ## No-app-open live sync (Siri + Lock Screen Shortcut) — TOP PRIORITY
-> STATUS 2026-06-15: **Backend DEPLOYED + verified** (migration `20260615_001_voice_track.sql` applied; Edge Function `voice-track` deployed `--no-verify-jwt`; start/idempotent/stop functionally tested). RN code (credential registration, RPC-fallback drain, LA adoption) **pushed**. Native intent (Swift POST + ActivityKit) **pushed** — needs **one Codemagic build** to ship, then on-device test. Key risk to verify on device: starting a Live Activity from a background App Intent (DB write succeeds regardless; LA falls back to next app-open if iOS blocks background-start).
+> STATUS 2026-06-15: **Backend DEPLOYED + verified** (migration `20260615_001_voice_track.sql` applied; Edge Function `voice-track` deployed `--no-verify-jwt`; start/idempotent/stop functionally tested). Native intent now does **DB-live only** (POST → Edge Function); the **Live Activity updates on next app-open** via RN reconcile. Driving ActivityKit *directly from the intent* (instant LA, app closed) is DEFERRED — expo-live-activity's `LiveActivityAttributes` isn't visible to the app target cross-module (first Codemagic build failed on `cannot find type 'LiveActivityAttributes'`). Follow-up: export the attributes to the app target (e.g. config plugin adds a shared attributes file to the main target) or find the correct import. Needs one Codemagic build for the DB-live intent, then on-device test.
 Goal: trigger Siri/Shortcut without opening or unlocking the app, and have it reflect **live** in BOTH:
 1. **Supabase DB** (other apps consume this data — can't wait for next app open), and
 2. the **iOS Live Activity** (Dynamic Island + Lock Screen).

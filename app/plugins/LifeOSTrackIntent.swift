@@ -1,21 +1,17 @@
 import AppIntents
 import Foundation
-#if canImport(ActivityKit)
-import ActivityKit
-#endif
-#if canImport(ExpoLiveActivity)
-import ExpoLiveActivity
-#endif
 
-// LifeOS Siri / Shortcut "track" commands (no-app-open live sync, Correct V1).
+// LifeOS Siri / Shortcut "track" commands (no-app-open live sync).
 // App Intents run in the app process in the background (even while locked) but do
 // NOT boot React Native. So the intent itself:
 //   1. POSTs to the Supabase `voice-track` Edge Function (authed by a per-device
 //      secret RN stored in lifeos_voice_cred.json) → DB is written LIVE.
-//   2. Drives ActivityKit directly (reusing expo-live-activity's LiveActivityAttributes)
-//      → Lock Screen / Dynamic Island updates LIVE.
-//   3. On network failure, falls back to the local queue (RN applies on next open,
+//   2. On network failure, falls back to the local queue (RN applies on next open,
 //      idempotently via command_id).
+// The Live Activity updates when the app is next opened (RN reconcile reads the
+// new running entry from the DB). Driving ActivityKit directly from the intent is
+// a follow-up (needs expo-live-activity's LiveActivityAttributes exported to the
+// app target — not currently visible cross-module).
 // Task options for the Shortcuts UI come from lifeos_quick_tasks.json (RN-written).
 
 // MARK: - Shared file helpers
@@ -102,94 +98,12 @@ private func enqueueFallback(commandId: String, title: String, at: String) {
   }
 }
 
-// MARK: - Live Activity (local ActivityKit, reusing expo-live-activity types)
-
-@available(iOS 16.0, *)
-private func saveActivityId(entryId: String, activityId: String) {
-  guard !entryId.isEmpty, let url = documentsURL("lifeos_la_map.json") else { return }
-  var map: [String: String] = [:]
-  if let data = try? Data(contentsOf: url),
-     let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
-    map = obj
-  }
-  map[entryId] = activityId
-  if let data = try? JSONSerialization.data(withJSONObject: map, options: []) {
-    try? data.write(to: url, options: .atomic)
-  }
-}
-
-@available(iOS 16.0, *)
-private func mappedActivityId(_ entryId: String) -> String? {
-  guard let url = documentsURL("lifeos_la_map.json"),
-        let data = try? Data(contentsOf: url),
-        let map = try? JSONSerialization.jsonObject(with: data) as? [String: String]
-  else { return nil }
-  return map[entryId]
-}
-
-private func isoToMs(_ s: String?) -> Double? {
-  guard let s = s else { return nil }
-  let f1 = ISO8601DateFormatter()
-  f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  if let d = f1.date(from: s) { return d.timeIntervalSince1970 * 1000 }
-  let f2 = ISO8601DateFormatter()
-  if let d = f2.date(from: s) { return d.timeIntervalSince1970 * 1000 }
-  return nil
-}
-
-@available(iOS 16.2, *)
-private func applyLiveActivity(_ result: [String: Any]) async {
-#if canImport(ActivityKit) && canImport(ExpoLiveActivity)
-  guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-  let action = result["action"] as? String ?? "start"
-  let entryId = result["entry_id"] as? String ?? ""
-  let title = result["title"] as? String ?? ""
-
-  if action == "stop" || action == "idempotent" && result["is_running"] as? Bool == false {
-    if let aid = mappedActivityId(entryId) {
-      for act in Activity<LiveActivityAttributes>.activities where act.id == aid {
-        await act.end(nil, dismissalPolicy: .immediate)
-      }
-    }
-    return
-  }
-
-  // start ends existing activities; parallel leaves them running
-  if action == "start" {
-    for act in Activity<LiveActivityAttributes>.activities {
-      await act.end(nil, dismissalPolicy: .immediate)
-    }
-  }
-
-  let startMs = isoToMs(result["start_time"] as? String) ?? (Date().timeIntervalSince1970 * 1000)
-  let attrs = LiveActivityAttributes(
-    name: "ExpoLiveActivity",
-    backgroundColor: "#0A0A0A",
-    titleColor: "#FFFFFF",
-    subtitleColor: "#9CA3AF",
-    progressViewTint: "#C8102E",
-    progressViewLabelColor: "#FFFFFF",
-    deepLinkUrl: "lifeos://stop-start?entry=\(entryId)",
-    timerType: .digital
-  )
-  let state = LiveActivityAttributes.ContentState(
-    title: title,
-    elapsedTimerStartDateInMilliseconds: startMs
-  )
-  if let act = try? Activity.request(attributes: attrs, content: .init(state: state, staleDate: nil)) {
-    saveActivityId(entryId: entryId, activityId: act.id)
-  }
-#endif
-}
-
-// Shared run path for all three intents.
+// Shared run path for all intents: write to Supabase live, else queue fallback.
 @available(iOS 16.0, *)
 private func runTrack(title: String) async {
   let commandId = UUID().uuidString
   let at = ISO8601DateFormatter().string(from: Date())
-  if let result = await postVoiceTrack(commandId: commandId, title: title, at: at) {
-    if #available(iOS 16.2, *) { await applyLiveActivity(result) }
-  } else {
+  if await postVoiceTrack(commandId: commandId, title: title, at: at) == nil {
     enqueueFallback(commandId: commandId, title: title, at: at)
   }
 }
