@@ -146,6 +146,13 @@ Recommended design (post Codex review — "Correct V1"):
 - **Simpler "Fast V1" alternative** (if we want least work first): native reads the last RN-saved JWT + same Edge Function/SQL + local ActivityKit + idempotent fallback — but it's only live while the JWT is fresh (app opened within token TTL). Codex recommends going straight to Correct V1.
 - APNs Live Activity push deferred (needs push tokens + provider setup); local ActivityKit is simpler/deterministic for same-device Siri starts.
 
+### APNs push-to-start (instant Dynamic Island, app closed) — IN PROGRESS 2026-06-15
+> iOS blocks `Activity.request` from a background App Intent, so the only way to START a Live Activity while the app is closed is an APNs push-to-start (iOS 17.2+; device is iOS 26+). Build #1 goal: prove the push-to-start token lands in Supabase.
+- expo-live-activity `enablePushNotifications: true` → sets `aps-environment=development` + Info.plist `ExpoLiveActivity_EnablePushNotifications=true` (native then observes `pushToStartTokenUpdates`).
+- RN `pushToStartToken.ts`: `addActivityPushToStartTokenListener` → `set_push_to_start_token(device_id, token)` RPC → stored on `voice_credentials.push_to_start_token` (migration `20260615_002`).
+- Prereq done: Push capability enabled on App ID `com.pedapatiamarsh.lifeos` + dev profile regenerated via `eas credentials`.
+- NEXT after token lands: server sends `start` push to `api.sandbox.push.apple.com`, topic `com.pedapatiamarsh.lifeos.push-type.liveactivity`, `apns-push-type: liveactivity` (needs APNs .p8 auth key). Then wire Siri/Edge Function to fire the push so the Island appears the instant the user speaks.
+
 ## Other deferred
 - Lock-screen / home quick-start buttons: top-N tasks by historic use at the current time (one-tap start), beyond the generic text-box shortcut.
 - Build pipeline: Codemagic `eas build --local` set up as the EAS-quota overflow valve (see repo `codemagic.yaml`).
