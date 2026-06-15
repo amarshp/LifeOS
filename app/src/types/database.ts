@@ -207,6 +207,7 @@ export interface TimeEntry {
   is_running: boolean
   tags: string[]
   notes: string | null
+  command_id: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null
