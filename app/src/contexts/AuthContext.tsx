@@ -4,6 +4,7 @@ import * as Linking from 'expo-linking'
 import * as WebBrowser from 'expo-web-browser'
 import { supabase } from '../lib/supabase'
 import * as categoriesService from '../services/categories'
+import { revokeVoiceCredential } from '../lib/voiceCredential'
 
 WebBrowser.maybeCompleteAuthSession()
 
@@ -93,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signOut(): Promise<void> {
+    await revokeVoiceCredential().catch(() => {}) // revoke device voice cred before session ends
     const { error } = await supabase.auth.signOut()
     if (error) throw error
   }

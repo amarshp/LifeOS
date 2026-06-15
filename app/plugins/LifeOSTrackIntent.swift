@@ -1,13 +1,22 @@
 import AppIntents
 import Foundation
+#if canImport(ActivityKit)
+import ActivityKit
+#endif
+#if canImport(ExpoLiveActivity)
+import ExpoLiveActivity
+#endif
 
-// LifeOS Siri "track" commands. App Intents run in the app process in the
-// background (even while locked) and CAPTURE a command to a queue file in the
-// app's Documents dir. RN drains the queue on next foreground and applies it to
-// Supabase (backdated to when spoken, with a `review` tag). No native network.
-//
-// Task options come from lifeos_quick_tasks.json (written by RN): the user's
-// categories + recent task titles, so Siri can match a spoken name.
+// LifeOS Siri / Shortcut "track" commands (no-app-open live sync, Correct V1).
+// App Intents run in the app process in the background (even while locked) but do
+// NOT boot React Native. So the intent itself:
+//   1. POSTs to the Supabase `voice-track` Edge Function (authed by a per-device
+//      secret RN stored in lifeos_voice_cred.json) → DB is written LIVE.
+//   2. Drives ActivityKit directly (reusing expo-live-activity's LiveActivityAttributes)
+//      → Lock Screen / Dynamic Island updates LIVE.
+//   3. On network failure, falls back to the local queue (RN applies on next open,
+//      idempotently via command_id).
+// Task options for the Shortcuts UI come from lifeos_quick_tasks.json (RN-written).
 
 // MARK: - Shared file helpers
 
@@ -37,27 +46,151 @@ private func loadConfig() -> (defaultCategoryId: String, tasks: [TaskEntity]) {
 @available(iOS 16.0, *)
 private func loadTasks() -> [TaskEntity] { loadConfig().tasks }
 
-@available(iOS 16.0, *)
-private func loadDefaultCategoryId() -> String { loadConfig().defaultCategoryId }
+// MARK: - Voice credential + network (DB-live path)
 
 @available(iOS 16.0, *)
-private func enqueue(title: String, categoryId: String) {
+private func loadVoiceCred() -> (url: String, deviceId: String, secret: String, anonKey: String)? {
+  guard let u = documentsURL("lifeos_voice_cred.json"),
+        let data = try? Data(contentsOf: u),
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let url = obj["functionUrl"] as? String,
+        let deviceId = obj["deviceId"] as? String,
+        let secret = obj["secret"] as? String,
+        let anonKey = obj["anonKey"] as? String
+  else { return nil }
+  return (url, deviceId, secret, anonKey)
+}
+
+// POST to the Edge Function. Returns the inner `result` dict on success, else nil.
+@available(iOS 16.0, *)
+private func postVoiceTrack(commandId: String, title: String, at: String) async -> [String: Any]? {
+  guard let cred = loadVoiceCred(), let url = URL(string: cred.url) else { return nil }
+  var req = URLRequest(url: url)
+  req.httpMethod = "POST"
+  req.timeoutInterval = 12
+  req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+  req.setValue(cred.anonKey, forHTTPHeaderField: "apikey")
+  req.setValue("Bearer \(cred.anonKey)", forHTTPHeaderField: "Authorization")
+  req.setValue(cred.secret, forHTTPHeaderField: "x-device-secret")
+  let body: [String: Any] = [
+    "device_id": cred.deviceId, "command_id": commandId, "title": title, "at": at,
+  ]
+  req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+  do {
+    let (data, resp) = try await URLSession.shared.data(for: req)
+    guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    return (obj["result"] as? [String: Any]) ?? obj
+  } catch {
+    return nil
+  }
+}
+
+// Fallback queue (RN drains on next open, idempotent via command_id).
+@available(iOS 16.0, *)
+private func enqueueFallback(commandId: String, title: String, at: String) {
   guard let url = documentsURL("lifeos_track_queue.json") else { return }
   var queue: [[String: Any]] = []
   if let data = try? Data(contentsOf: url),
      let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
     queue = arr
   }
-  // Action (start / stop / parallel) is parsed from the title on the JS side, so
-  // it can be tuned with a JS reload instead of a native rebuild.
-  queue.append([
-    "action": "track",
-    "categoryId": categoryId,
-    "title": title,
-    "at": ISO8601DateFormatter().string(from: Date()),
-  ])
+  queue.append(["command_id": commandId, "title": title, "at": at])
   if let data = try? JSONSerialization.data(withJSONObject: queue, options: []) {
     try? data.write(to: url, options: .atomic)
+  }
+}
+
+// MARK: - Live Activity (local ActivityKit, reusing expo-live-activity types)
+
+@available(iOS 16.0, *)
+private func saveActivityId(entryId: String, activityId: String) {
+  guard !entryId.isEmpty, let url = documentsURL("lifeos_la_map.json") else { return }
+  var map: [String: String] = [:]
+  if let data = try? Data(contentsOf: url),
+     let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+    map = obj
+  }
+  map[entryId] = activityId
+  if let data = try? JSONSerialization.data(withJSONObject: map, options: []) {
+    try? data.write(to: url, options: .atomic)
+  }
+}
+
+@available(iOS 16.0, *)
+private func mappedActivityId(_ entryId: String) -> String? {
+  guard let url = documentsURL("lifeos_la_map.json"),
+        let data = try? Data(contentsOf: url),
+        let map = try? JSONSerialization.jsonObject(with: data) as? [String: String]
+  else { return nil }
+  return map[entryId]
+}
+
+private func isoToMs(_ s: String?) -> Double? {
+  guard let s = s else { return nil }
+  let f1 = ISO8601DateFormatter()
+  f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  if let d = f1.date(from: s) { return d.timeIntervalSince1970 * 1000 }
+  let f2 = ISO8601DateFormatter()
+  if let d = f2.date(from: s) { return d.timeIntervalSince1970 * 1000 }
+  return nil
+}
+
+@available(iOS 16.2, *)
+private func applyLiveActivity(_ result: [String: Any]) async {
+#if canImport(ActivityKit) && canImport(ExpoLiveActivity)
+  guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+  let action = result["action"] as? String ?? "start"
+  let entryId = result["entry_id"] as? String ?? ""
+  let title = result["title"] as? String ?? ""
+
+  if action == "stop" || action == "idempotent" && result["is_running"] as? Bool == false {
+    if let aid = mappedActivityId(entryId) {
+      for act in Activity<LiveActivityAttributes>.activities where act.id == aid {
+        await act.end(nil, dismissalPolicy: .immediate)
+      }
+    }
+    return
+  }
+
+  // start ends existing activities; parallel leaves them running
+  if action == "start" {
+    for act in Activity<LiveActivityAttributes>.activities {
+      await act.end(nil, dismissalPolicy: .immediate)
+    }
+  }
+
+  let startMs = isoToMs(result["start_time"] as? String) ?? (Date().timeIntervalSince1970 * 1000)
+  let attrs = LiveActivityAttributes(
+    name: "ExpoLiveActivity",
+    backgroundColor: "#0A0A0A",
+    titleColor: "#FFFFFF",
+    subtitleColor: "#9CA3AF",
+    progressViewTint: "#C8102E",
+    progressViewLabelColor: "#FFFFFF",
+    deepLinkUrl: "lifeos://stop-start?entry=\(entryId)",
+    timerType: .digital
+  )
+  let state = LiveActivityAttributes.ContentState(
+    title: title,
+    elapsedTimerStartDateInMilliseconds: startMs
+  )
+  if let act = try? Activity.request(attributes: attrs, content: .init(state: state, staleDate: nil)) {
+    saveActivityId(entryId: entryId, activityId: act.id)
+  }
+#endif
+}
+
+// Shared run path for all three intents.
+@available(iOS 16.0, *)
+private func runTrack(title: String) async {
+  let commandId = UUID().uuidString
+  let at = ISO8601DateFormatter().string(from: Date())
+  if let result = await postVoiceTrack(commandId: commandId, title: title, at: at) {
+    if #available(iOS 16.2, *) { await applyLiveActivity(result) }
+  } else {
+    enqueueFallback(commandId: commandId, title: title, at: at)
   }
 }
 
@@ -81,8 +214,7 @@ struct TaskEntityQuery: EntityStringQuery {
     loadTasks().filter { identifiers.contains($0.id) }
   }
   // Resolve the spoken text to exactly ONE entity so Siri never prompts:
-  // exact match → fuzzy contains → else a free-text entry under the default
-  // category. The title is whatever was spoken.
+  // exact match → fuzzy contains → else a free-text entry. Title = what was spoken.
   func entities(matching string: String) async throws -> [TaskEntity] {
     let q = string.trimmingCharacters(in: .whitespacesAndNewlines)
     let lower = q.lowercased()
@@ -91,23 +223,16 @@ struct TaskEntityQuery: EntityStringQuery {
     if let part = all.first(where: { $0.title.lowercased().contains(lower) || lower.contains($0.title.lowercased()) }) {
       return [part]
     }
-    return [TaskEntity(id: "free:\(lower)", title: q, categoryId: loadDefaultCategoryId())]
+    return [TaskEntity(id: "free:\(lower)", title: q, categoryId: "")]
   }
-  // Return [] so Siri accepts dictated free text (e.g. "track sleep") and routes
-  // it to entities(matching:) — which resolves to a single entry — instead of
-  // showing a "which one?" disambiguation list of every task. (Apple: empty
-  // suggestions enables dictation capture for the phrase parameter.)
-  func suggestedEntities() async throws -> [TaskEntity] {
-    []
-  }
+  // Return [] so Siri accepts dictated free text instead of showing a list.
+  func suggestedEntities() async throws -> [TaskEntity] { [] }
 }
 
 // MARK: - Intents
 
 // Single one-shot intent: "LifeOS <title>" captures the whole tail as the title.
-// start / stop / parallel are derived from the title by the JS drain (keyword
-// prefix: "stop …", "parallel …", "also …"), so routing is tunable without a
-// native rebuild and there is no cross-phrase collision.
+// start / stop / parallel are derived from the title server-side (SQL).
 @available(iOS 16.0, *)
 struct TrackIntent: AppIntent {
   static var title: LocalizedStringResource = "Track a task"
@@ -117,18 +242,13 @@ struct TrackIntent: AppIntent {
   @Parameter(title: "Task")
   var task: TaskEntity
 
-  // No ProvidesDialog → Siri dismisses immediately instead of lingering 6-8s on
-  // a "Got it" snippet (annoying for a fire-and-forget logging action).
   func perform() async throws -> some IntentResult {
-    enqueue(title: task.title, categoryId: task.categoryId)
+    await runTrack(title: task.title)
     return .result()
   }
 }
 
-// Reliable two-step fallback. Trigger "New entry in LifeOS" has the app name at
-// the END so it can't collide with the greedy "LifeOS <task>" phrase. Siri asks
-// via requestValueDialog and captures arbitrary dictation as a plain String —
-// the one mechanism Apple guarantees for open-ended text.
+// Reliable two-step fallback. "New entry in LifeOS" → Siri asks → dictate.
 @available(iOS 16.0, *)
 struct TrackDictateIntent: AppIntent {
   static var title: LocalizedStringResource = "New LifeOS entry"
@@ -139,7 +259,7 @@ struct TrackDictateIntent: AppIntent {
   var titleText: String
 
   func perform() async throws -> some IntentResult {
-    enqueue(title: titleText, categoryId: loadDefaultCategoryId())
+    await runTrack(title: titleText)
     return .result()
   }
 }
@@ -152,9 +272,7 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
     AppShortcut(
       intent: TrackIntent(),
       phrases: [
-        // "LifeOS Commute to movie" — everything after the app name is the title
-        // (free text via empty suggestedEntities). Say "LifeOS stop sleep" /
-        // "LifeOS parallel gym" and the JS drain routes by the leading keyword.
+        // "LifeOS Commute to movie" — everything after the app name is the title.
         "\(.applicationName) \(\.$task)",
         "Track \(\.$task) in \(.applicationName)",
         "Track \(\.$task) on \(.applicationName)",

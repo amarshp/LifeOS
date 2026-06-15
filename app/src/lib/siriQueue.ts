@@ -3,6 +3,7 @@ import type { Category, TimeEntry, Tag } from '../types/database'
 import * as timeEntries from '../services/time-entries'
 import * as categoriesService from '../services/categories'
 import * as tagsService from '../services/tags'
+import { supabase } from './supabase'
 
 // Bridge for the native Siri "track" intents (LifeOSTrackIntent.swift).
 // - syncQuickTasks: write the task options the AppEntity offers to Siri.
@@ -20,8 +21,9 @@ interface QuickTask {
 }
 
 interface TrackCommand {
-  action: string // always "track" now; real action parsed from the title
-  categoryId: string
+  command_id?: string // new path: idempotent server RPC handles everything
+  action?: string // legacy path
+  categoryId?: string // legacy path
   title: string
   at: string // ISO8601
 }
@@ -164,10 +166,14 @@ export async function drainTrackQueue(): Promise<DrainResult> {
   // chronological, so sequential start/stop ordering is correct
   queue.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
 
-  const [categories, tags] = await Promise.all([
-    categoriesService.getCategories().catch(() => [] as Category[]),
-    tagsService.getAllTags().catch(() => [] as Tag[]),
-  ])
+  // Legacy commands (no command_id) need category/tag data for in-JS matching.
+  const needLegacy = queue.some((c) => !c.command_id)
+  const [categories, tags] = needLegacy
+    ? await Promise.all([
+        categoriesService.getCategories().catch(() => [] as Category[]),
+        tagsService.getAllTags().catch(() => [] as Tag[]),
+      ])
+    : [[] as Category[], [] as Tag[]]
   const fallbackCatId = (
     categories.find((c) => ['misc', 'inbox', 'other'].includes(c.name.toLowerCase())) ?? categories[0]
   )?.id
@@ -176,8 +182,19 @@ export async function drainTrackQueue(): Promise<DrainResult> {
   const errors: string[] = []
   for (const cmd of queue) {
     try {
-      const running = await timeEntries.getRunningTimers()
-      await applyCommand(cmd, running, categories, tags, fallbackCatId)
+      if (cmd.command_id) {
+        // New path: idempotent server RPC does parse + category/tag + write.
+        const { error } = await supabase.rpc('track_from_voice', {
+          p_command_id: cmd.command_id,
+          p_title: cmd.title,
+          p_at: cmd.at,
+        })
+        if (error) throw error
+      } else {
+        // Legacy path (older native build): parse + match + write in JS.
+        const running = await timeEntries.getRunningTimers()
+        await applyCommand(cmd, running, categories, tags, fallbackCatId)
+      }
       applied += 1
     } catch (e) {
       errors.push(`"${cmd.title}": ${e instanceof Error ? e.message : String(e)}`)
