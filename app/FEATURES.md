@@ -133,14 +133,17 @@ Goal: trigger Siri/Shortcut without opening or unlocking the app, and have it re
 1. **Supabase DB** (other apps consume this data — can't wait for next app open), and
 2. the **iOS Live Activity** (Dynamic Island + Lock Screen).
 Why it's hard: a background App Intent does NOT boot React Native, so the intent itself must (a) write to Supabase over the network in Swift and (b) drive ActivityKit directly. Today it only enqueues and applies on next foreground.
-Planned design:
-- **Supabase RPC `track_from_voice(p_title, p_at)`** (SQL): parse stop/parallel, match category+tag, stop-previous, insert — runs as authed user (RLS + user_id automatic). Logic lives in SQL → updatable without an app build.
-- **RN writes the session** (access token + url + anon key) to a shared Documents file on auth change/refresh.
-- **Native App Intent**: read token → POST the RPC → on success update the Live Activity (reuse `expo-live-activity` `LiveActivityAttributes`, public init) and skip the queue; on failure fall back to the existing queue.
-- **RN on open**: adopt the intent-started Live Activity via a shared activity-id map (move it off AsyncStorage → Documents JSON) so reconcile doesn't create a duplicate.
-- **Token strategy (decision pending):** Option A (recommended) — native NEVER refreshes (avoids rotating/invalidating RN's session); uses the last access token RN saved; DB-live while session fresh, else queues; raise Supabase access-token TTL to widen the window. Option B — native refreshes too (truly live after long closures, but fragile).
-- Traps to handle: duplicate Live Activities, double-inserted rows (native-write vs queue-drain), offline, token expiry.
-- (Pending Codex architecture review for a possibly-better approach.)
+Recommended design (post Codex review — "Correct V1"):
+- **Auth = device-scoped voice credential (NOT the Supabase JWT).** RN, while logged in, registers a per-device secret; server stores only a hash; raw secret lives in the **iOS Keychain** (accessible-after-first-unlock). The native intent signs each request with HMAC (`device_id + command_id + body + timestamp`). → truly live until logout, no JWT freshness/rotation fragility. Credential is narrowly scoped (create/stop voice entries only), revocable, rotated on logout/reinstall. Never let native refresh the Supabase session; never embed the service-role key; never use the anon key as a per-user credential.
+- **Supabase Edge Function `voice-track`** = the single stable native contract. Authenticates the HMAC, maps to `user_id`, calls a security-definer SQL fn, returns canonical timer state. Lets us change auth/validation/response/APNs later **without a Swift rebuild**.
+- **SQL `track_from_voice(...)`** (security-definer, one transaction): parse stop/parallel, match category+tag, stop-previous, insert. Advisory lock / partial unique index to enforce single running timer (unless parallel).
+- **Idempotency:** every command carries a UUID; DB unique `(user_id, command_id)`; the native fallback queue retries the SAME UUID (never a new one) → no double inserts.
+- **Native intent (tiny Swift):** read Keychain secret → POST `voice-track` → on success update Live Activity locally (reuse `expo-live-activity` `LiveActivityAttributes`, public init) → on failure enqueue the same command_id. No parsing/matching/schema knowledge in Swift.
+- **DB is source of truth:** update the Live Activity only after DB success; if DB ok but ActivityKit fails, queue a "reconcile activity" task (not another insert).
+- **RN on open:** reconcile LA by `entry_id` — enumerate `Activity<LiveActivityAttributes>.activities`, adopt the one matching the running entry, end duplicates (don't rely only on a saved activity_id).
+- Offline can't satisfy DB-live → queue is the only fallback (optionally show a "pending" LA state, but don't pretend other consumers see it until Supabase confirms).
+- **Simpler "Fast V1" alternative** (if we want least work first): native reads the last RN-saved JWT + same Edge Function/SQL + local ActivityKit + idempotent fallback — but it's only live while the JWT is fresh (app opened within token TTL). Codex recommends going straight to Correct V1.
+- APNs Live Activity push deferred (needs push tokens + provider setup); local ActivityKit is simpler/deterministic for same-device Siri starts.
 
 ## Other deferred
 - Lock-screen / home quick-start buttons: top-N tasks by historic use at the current time (one-tap start), beyond the generic text-box shortcut.
