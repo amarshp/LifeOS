@@ -34,7 +34,8 @@
       "expo-web-browser",
       "./plugins/withLiveActivityStopButton",
       "./plugins/withTrackIntent",
-      "expo-live-activity"
+      "expo-live-activity",
+      "./plugins/withPublicLiveActivityAttributes"
     ],
     "extra": {
       "router": {},
