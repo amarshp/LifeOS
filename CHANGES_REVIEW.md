@@ -66,7 +66,18 @@ The Island shows only one activity at a time, so showing *both* parallel timers 
 
 ---
 
+## D5. Status honesty
+Only **push-to-START** (D3 steps 1-3) is device-proven from earlier tonight. Everything else here — **stop-by-name (D3.5), tap-split (D3.4/6), dedup (D3.7), and all of dual-task (D1)** — is **implemented + compiles clean but has NOT run on a device yet.** This test plan is what promotes them from "implemented" to "working."
+
 ## E. Watch-outs (things only the device can confirm)
+
+- **The stop linchpin (most likely failure point):** app-closed stop assumes the freshly-woken background intent process can *enumerate* `Activity.activities` and see the push-started card. "Ending from background is allowed" is confirmed; "the woken intent can *see* the push-started activity" is the untested hinge. **If D3-step-5 shows the card NOT disappearing, that enumeration is the cause** — not the `.end()` call or the `name` match. (Workaround if so: have the Edge Function send an `end` push instead — needs the per-activity token pipeline.)
+
+### Known gaps the dedup introduced (edge cases — not tonight's scope, just so they're not surprises)
+- **Siri command that fails the network (offline):** it falls back to the local queue; on next open, the entry is written *with* a `command_id`, so reconcile now **skips** starting a card — but no push ever fired either, so that one entry gets **no Live Activity** until something restarts it. Narrow (Siri-offline only), but a real regression in the degraded path vs. before dedup.
+- **Voice "stop" of a *manually*-started card while app-closed:** in-app starts hardcode `name="ExpoLiveActivity"`, so the intent's `name==entry_id` match won't find them → that card **lingers** until the app opens and reconcile cleans it. Self-heals on open.
+
+### Other watch-outs
 - **Lock-screen body vs STOP-button tap separation** is an iOS-17+ behavior; on iOS 26 it should work, but if a body tap ever triggers stop (or vice-versa) on the **Lock Screen specifically**, that's the thing to report — the Dynamic Island expanded view is where the separate `Link` is most reliable.
 - `lifeos://home` should land on the Home tab; if it dead-ends, the route `app/home.tsx` may need a tweak.
 - A Siri "stop" only ends the card if the activity's `name` is the entry id — which is true for cards started **after** this Edge Function deploy. Old test cards won't match (clear them).
