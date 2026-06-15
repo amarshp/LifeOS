@@ -43,7 +43,8 @@ public struct LiveActivityAttributes: ActivityAttributes {
     }
   }
 
-  var name: String
+  // public so the app-target App Intent can READ it (matches activities by name).
+  public var name: String
   var backgroundColor: String?
   var titleColor: String?
   var subtitleColor: String?
