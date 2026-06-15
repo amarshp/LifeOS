@@ -90,10 +90,15 @@ export default function TabLayout() {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void drainAndReport()
+        // A Siri/Shortcut entry may have changed the DB directly (Edge Function
+        // path, no local queue) — always reload running state + dependent views
+        // so the banner/Day/Insights reflect it immediately on foreground.
+        timer.refresh()
+        emitTimerChange()
       }
     })
     return () => sub.remove()
-  }, [drainAndReport])
+  }, [drainAndReport, timer.refresh])
 
   const pulseAnim = useRef(new Animated.Value(1)).current
   const pulseAnimRef = useRef(pulseAnim)

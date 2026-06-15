@@ -8,6 +8,7 @@
 // (verify_jwt is also disabled in supabase/config.toml.)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { sendPushToStart } from './apns.ts'
 
 interface Body {
   device_id?: string
@@ -62,7 +63,7 @@ Deno.serve(async (req) => {
 
   const { data: cred, error: credErr } = await admin
     .from('voice_credentials')
-    .select('user_id, secret_hash, revoked')
+    .select('user_id, secret_hash, revoked, push_to_start_token')
     .eq('device_id', device_id)
     .maybeSingle()
   if (credErr) return json({ error: 'lookup failed' }, 500)
@@ -81,5 +82,32 @@ Deno.serve(async (req) => {
   })
   if (error) return json({ error: error.message }, 500)
 
-  return json({ ok: true, result: data })
+  // Best-effort: start a Live Activity via APNs push-to-start so the Dynamic
+  // Island / Lock Screen fires instantly while the app is closed. The DB write
+  // already succeeded above — never fail the request if the push fails.
+  let push: { sent: boolean; error?: string } = { sent: false }
+  try {
+    const r = (data ?? {}) as {
+      action?: string
+      entry_id?: string
+      title?: string
+      start_time?: string
+      is_running?: boolean
+    }
+    const startable = (r.action === 'start' || r.action === 'parallel') && r.is_running !== false
+    if (startable && cred.push_to_start_token && r.entry_id) {
+      const startMs = r.start_time ? Date.parse(r.start_time) : Date.now()
+      await sendPushToStart({
+        token: cred.push_to_start_token,
+        title: r.title ?? title,
+        entryId: r.entry_id,
+        startMs: Number.isFinite(startMs) ? startMs : Date.now(),
+      })
+      push = { sent: true }
+    }
+  } catch (e) {
+    push = { sent: false, error: e instanceof Error ? e.message : String(e) }
+  }
+
+  return json({ ok: true, result: data, push })
 })

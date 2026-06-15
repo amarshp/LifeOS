@@ -146,8 +146,8 @@ Recommended design (post Codex review — "Correct V1"):
 - **Simpler "Fast V1" alternative** (if we want least work first): native reads the last RN-saved JWT + same Edge Function/SQL + local ActivityKit + idempotent fallback — but it's only live while the JWT is fresh (app opened within token TTL). Codex recommends going straight to Correct V1.
 - APNs Live Activity push deferred (needs push tokens + provider setup); local ActivityKit is simpler/deterministic for same-device Siri starts.
 
-### APNs push-to-start (instant Dynamic Island, app closed) — IN PROGRESS 2026-06-15
-> iOS blocks `Activity.request` from a background App Intent, so the only way to START a Live Activity while the app is closed is an APNs push-to-start (iOS 17.2+; device is iOS 26+). Build #1 goal: prove the push-to-start token lands in Supabase.
+### APNs push-to-start (instant Dynamic Island, app closed) — Build #1 DONE 2026-06-15
+> iOS blocks `Activity.request` from a background App Intent, so the only way to START a Live Activity while the app is closed is an APNs push-to-start (iOS 17.2+; device is iOS 26+). Build #1 goal — **prove the push-to-start token lands in Supabase — PASSED** (device `2f5505e5…`, 160-char token stored on `voice_credentials.push_to_start_token`). Credential gotcha that cost 2 builds: the dev (internal/ad-hoc) profile must be regenerated *after* Push is enabled on the App ID; EAS served a stale pre-entitlement profile until it was deleted + recreated while logged into Apple.
 - expo-live-activity `enablePushNotifications: true` → sets `aps-environment=development` + Info.plist `ExpoLiveActivity_EnablePushNotifications=true` (native then observes `pushToStartTokenUpdates`).
 - RN `pushToStartToken.ts`: `addActivityPushToStartTokenListener` → `set_push_to_start_token(device_id, token)` RPC → stored on `voice_credentials.push_to_start_token` (migration `20260615_002`).
 - Prereq done: Push capability enabled on App ID `com.pedapatiamarsh.lifeos` + dev profile regenerated via `eas credentials`.
