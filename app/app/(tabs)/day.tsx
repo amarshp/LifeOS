@@ -29,6 +29,7 @@ import * as Haptics from 'expo-haptics'
 import { FABs } from '../../src/components/FABs'
 import { CategoryChip } from '../../src/components/CategoryChip'
 import { TimePicker } from '../../src/components/TimePicker'
+import { UndoToast } from '../../src/components/UndoToast'
 import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
@@ -309,7 +310,7 @@ function isDateInRange(date: string, startDate: string, endDate: string): boolea
 export default function DayScreen() {
   const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string }>()
   const timer = useTimer()
-  const { colors: tc, snapDragTo, hideSleep, sleepStart, sleepEnd } = useSettings()
+  const { colors: tc, snapDragTo, hideSleep, sleepStart, sleepEnd, reduceMotion } = useSettings()
   // Declared before the pinch gesture below, which reads visibleHours.
   const effectiveStart = hideSleep ? sleepEnd : START_HOUR
   const effectiveEnd = hideSleep ? sleepStart : END_HOUR
@@ -332,6 +333,7 @@ export default function DayScreen() {
   const [entrySheetInitialMode, setEntrySheetInitialMode] = useState<'timer' | 'past' | 'plan'>('timer')
   const [editingBlock, setEditingBlock] = useState<CalendarBlock | null>(null)
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null)
+  const [undo, setUndo] = useState<{ kind: 'entry' | 'block'; id: string; label: string } | null>(null)
   const [zoom, setZoom] = useState(1)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState(0)
@@ -1291,8 +1293,10 @@ export default function DayScreen() {
           loadData()
         }}
         onDelete={async () => {
+          const deleted = editingBlock
           setEditingBlock(null)
           loadData()
+          if (deleted) setUndo({ kind: 'block', id: deleted.id, label: 'Block deleted' })
         }}
       />
 
@@ -1308,11 +1312,34 @@ export default function DayScreen() {
           loadData()
         }}
         onDelete={async () => {
+          const deleted = editingEntry
           setEditingEntry(null)
           loadData()
+          if (deleted) setUndo({ kind: 'entry', id: deleted.id, label: 'Entry deleted' })
         }}
         onCategoryCreated={() => loadData()}
       />
+
+      {undo && (
+        <UndoToast
+          key={undo.id}
+          message={undo.label}
+          colors={tc}
+          reduceMotion={reduceMotion}
+          onUndo={async () => {
+            try {
+              if (undo.kind === 'entry') await timeEntriesService.restoreEntry(undo.id)
+              else await calendarBlocksService.restoreBlock(undo.id)
+              emitTimerChange()
+              loadData()
+            } catch {
+              // ignore — entry stays deleted; toast dismisses
+            }
+            setUndo(null)
+          }}
+          onHide={() => setUndo(null)}
+        />
+      )}
     </View>
     </GestureDetector>
   )

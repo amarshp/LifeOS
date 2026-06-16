@@ -172,3 +172,13 @@ export async function deleteBlock(id: string): Promise<void> {
 
   if (error) throw error
 }
+
+// Undo a soft-delete.
+export async function restoreBlock(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('calendar_blocks')
+    .update({ deleted_at: null } as unknown as Record<string, unknown>)
+    .eq('id', id)
+
+  if (error) throw error
+}
