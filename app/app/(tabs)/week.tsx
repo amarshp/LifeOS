@@ -46,6 +46,14 @@ function getWeekDates(referenceDate: Date, weekStartsOn: WeekStart): Date[] {
 
 const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+// Two ranges share a column-split only if they overlap by more than this. Ignores
+// minute-rounding drift (a new entry at HH:MM:00 vs the previous stop at HH:MM:43)
+// so sequential tasks render single-column; real parallel tasks (minutes) split.
+const LANE_OVERLAP_TOL_MS = 60_000
+function lanesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > LANE_OVERLAP_TOL_MS
+}
+
 function computeBlockLanes(
   blocks: CalendarBlock[],
   entries: TimeEntry[],
@@ -59,7 +67,7 @@ function computeBlockLanes(
       .filter(other => {
         const os = new Date(other.start_time).getTime()
         const oe = new Date(other.end_time).getTime()
-        return os < be && bs < oe
+        return lanesOverlap(bs, be, os, oe)
       })
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime() || a.id.localeCompare(b.id))
     if (overlappingBlocks.length > 1) {
@@ -70,7 +78,7 @@ function computeBlockLanes(
     const overlapsEntry = entries.some(e => {
       const es = new Date(e.start_time).getTime()
       const ee = new Date(e.end_time ?? fallbackEnd).getTime()
-      return es < be && bs < ee
+      return lanesOverlap(bs, be, es, ee)
     })
     lanes.set(block.id, overlapsEntry ? 'left' : 'full')
   }
@@ -90,7 +98,7 @@ function computeEntryLanes(
       .filter(other => {
         const os = new Date(other.start_time).getTime()
         const oe = new Date(other.end_time ?? fallbackEnd).getTime()
-        return os < ee && es < oe
+        return lanesOverlap(es, ee, os, oe)
       })
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime() || a.id.localeCompare(b.id))
     if (overlappingEntries.length > 1) {
@@ -100,7 +108,7 @@ function computeEntryLanes(
     const overlapsBlock = blocks.some(b => {
       const bs = new Date(b.start_time).getTime()
       const be = new Date(b.end_time).getTime()
-      return bs < ee && es < be
+      return lanesOverlap(es, ee, bs, be)
     })
     lanes.set(entry.id, overlapsBlock ? 'right' : 'full')
   }
