@@ -261,6 +261,7 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
       phrases: [
         "Track \(\.$task) in \(.applicationName)",
         "Track \(\.$task) on \(.applicationName)",
+        "\(.applicationName) track \(\.$task)",
       ],
       shortTitle: "Track",
       systemImageName: "record.circle"
@@ -282,6 +283,7 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
         "Stop \(\.$task) in \(.applicationName)",
         "Stop \(\.$task) on \(.applicationName)",
         "End \(\.$task) in \(.applicationName)",
+        "\(.applicationName) stop \(\.$task)",
       ],
       shortTitle: "Stop",
       systemImageName: "stop.circle"
