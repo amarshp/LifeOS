@@ -128,8 +128,8 @@
 
 # Roadmap / Planned (NOT yet built)
 
-## No-app-open live sync (Siri + Lock Screen Shortcut) — TOP PRIORITY
-> STATUS 2026-06-15: **Backend DEPLOYED + verified** (migration `20260615_001_voice_track.sql` applied; Edge Function `voice-track` deployed `--no-verify-jwt`; start/idempotent/stop functionally tested). Native intent now does **DB-live only** (POST → Edge Function); the **Live Activity updates on next app-open** via RN reconcile. Driving ActivityKit *directly from the intent* (instant LA, app closed) is DEFERRED — expo-live-activity's `LiveActivityAttributes` isn't visible to the app target cross-module (first Codemagic build failed on `cannot find type 'LiveActivityAttributes'`). Follow-up: export the attributes to the app target (e.g. config plugin adds a shared attributes file to the main target) or find the correct import. Needs one Codemagic build for the DB-live intent, then on-device test.
+## No-app-open live sync (Siri + Lock Screen Shortcut) — ✅ SHIPPED (see "APNs push-to-start" above)
+> STATUS 2026-06-16: **DONE.** DB-live + instant Live Activity while app-closed is built and the START path is device-proven. The "instant LA from a closed app" problem was solved with **APNs push-to-start** (Edge Function fires the push) + a background intent that **ends** activities locally — NOT by driving `Activity.request` from the intent (iOS forbids that). The design notes below ("Correct V1", HMAC/Keychain, "today it only enqueues") are **historical/superseded**; the shipped auth is a device-secret to the Edge Function and the shipped LA path is push-to-start. Remaining open item: 2 timers in one Live Activity for the Island (deferred — see `DUAL_TASK_PLAN.md`).
 Goal: trigger Siri/Shortcut without opening or unlocking the app, and have it reflect **live** in BOTH:
 1. **Supabase DB** (other apps consume this data — can't wait for next app open), and
 2. the **iOS Live Activity** (Dynamic Island + Lock Screen).
@@ -151,6 +151,7 @@ Recommended design (post Codex review — "Correct V1"):
 > - **START — PROVEN on device**: Siri (app closed) → `voice-track` Edge Function writes the DB entry AND fires an APNs push-to-start → Dynamic Island / Lock Screen appears, in sync with the DB. (APNs host = production `api.push.apple.com`; EAS ad-hoc export rewrites aps-environment to production. App must be backgrounded-not-killed.)
 > - **STOP (app-closed) — IMPLEMENTED, pending device test**: the native intent ENDS the activity locally (allowed in background) by matching `Activity.activities` on `attributes.name == entry_id`. No push tokens. Push payload sets `name = entry_id`.
 > - **Dedup on open — IMPLEMENTED, pending device test**: `reconcileLiveActivities` skips entries with a `command_id` (voice = push-managed) so opening the app never duplicates the card.
+> - **Foreground refresh**: the app reloads running state on every foreground (not only when the local queue had items), so a Siri/Edge-Function entry — which writes the DB with no local queue item — shows in the banner/Home/Insights immediately instead of staying stale.
 > - **Tap behavior — IMPLEMENTED, pending device test**: card BODY → `lifeos://home`; red STOP button → `lifeos://stop-start?entry=…`. Widget split (body uses `applyWidgetURL`; stop button uses `Link(URL(string:))`).
 > - Credential gotcha (cost 2 builds): the dev (internal/ad-hoc) profile must be **deleted + recreated** while logged into Apple *after* Push is enabled on the App ID.
 > - DEFERRED: 2 timers in ONE Live Activity for the Dynamic Island (see `DUAL_TASK_PLAN.md`).
