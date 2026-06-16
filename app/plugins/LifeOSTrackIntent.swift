@@ -218,6 +218,39 @@ struct TrackDictateIntent: AppIntent {
   }
 }
 
+// One-shot stop: "Stop <task> in LifeOS". We prepend "stop " so the same
+// server-side parser (SQL) routes it to a stop, and the intent ends the card.
+@available(iOS 16.0, *)
+struct StopIntent: AppIntent {
+  static var title: LocalizedStringResource = "Stop a task"
+  static var openAppWhenRun: Bool = false
+  static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+  @Parameter(title: "Task")
+  var task: TaskEntity
+
+  func perform() async throws -> some IntentResult {
+    await runTrack(title: "stop \(task.title)")
+    return .result()
+  }
+}
+
+// Two-step stop fallback: "Stop in LifeOS" → Siri asks → dictate the task.
+@available(iOS 16.0, *)
+struct StopDictateIntent: AppIntent {
+  static var title: LocalizedStringResource = "Stop a LifeOS task"
+  static var openAppWhenRun: Bool = false
+  static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+  @Parameter(title: "Task", requestValueDialog: "What do you want to stop?")
+  var titleText: String
+
+  func perform() async throws -> some IntentResult {
+    await runTrack(title: "stop \(titleText)")
+    return .result()
+  }
+}
+
 // MARK: - Siri phrases (app name required by Apple)
 
 @available(iOS 16.0, *)
@@ -242,6 +275,25 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
       ],
       shortTitle: "New entry",
       systemImageName: "mic.circle"
+    )
+    AppShortcut(
+      intent: StopIntent(),
+      phrases: [
+        "Stop \(\.$task) in \(.applicationName)",
+        "Stop \(\.$task) on \(.applicationName)",
+        "End \(\.$task) in \(.applicationName)",
+      ],
+      shortTitle: "Stop",
+      systemImageName: "stop.circle"
+    )
+    AppShortcut(
+      intent: StopDictateIntent(),
+      phrases: [
+        "Stop in \(.applicationName)",
+        "Stop tracking in \(.applicationName)",
+      ],
+      shortTitle: "Stop entry",
+      systemImageName: "stop.circle"
     )
   }
 }
