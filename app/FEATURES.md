@@ -149,14 +149,14 @@ Recommended design (post Codex review — "Correct V1"):
 ### APNs push-to-start (instant Dynamic Island, app closed) — 2026-06-15/16
 > iOS blocks `Activity.request` from a background App Intent, so START while app-closed = APNs push-to-start (iOS 17.2+; device iOS 26+).
 > - **START — PROVEN on device**: Siri (app closed) → `voice-track` Edge Function writes the DB entry AND fires an APNs push-to-start → Dynamic Island / Lock Screen appears, in sync with the DB. (APNs host = production `api.push.apple.com`; EAS ad-hoc export rewrites aps-environment to production. App must be backgrounded-not-killed.)
-> - **STOP (app-closed) — IMPLEMENTED, pending device test**: the native intent ENDS the activity locally (allowed in background) by matching `Activity.activities` on `attributes.name == entry_id`. No push tokens. Push payload sets `name = entry_id`.
-> - **Dedup on open — IMPLEMENTED, pending device test**: `reconcileLiveActivities` skips entries with a `command_id` (voice = push-managed) so opening the app never duplicates the card.
+> - **STOP (app-closed) — ✅ PROVEN on device (2026-06-16)**: the native intent ENDS the activity locally (allowed in background) by matching `Activity.activities` on `attributes.name == entry_id` — card disappears + DB stops, app never opened. No push tokens. Push payload sets `name = entry_id`. (Phrase: "track in LifeOS" → dictate "stop swimming"; one-shot "track stop swimming in LifeOS" can confuse Siri's NL.)
+> - **Dedup on open — ✅ PROVEN on device (2026-06-16)**: `reconcileLiveActivities` skips entries with a `command_id` (voice = push-managed) so opening the app never duplicates the card.
 > - **Foreground refresh**: the app reloads running state on every foreground (not only when the local queue had items), so a Siri/Edge-Function entry — which writes the DB with no local queue item — shows in the banner/Home/Insights immediately instead of staying stale.
-> - **Tap behavior — IMPLEMENTED, pending device test**: card BODY → `lifeos://home`; red STOP button → `lifeos://stop-start?entry=…`. Widget split (body uses `applyWidgetURL`; stop button uses `Link(URL(string:))`).
+> - **Tap behavior — ✅ PROVEN on device (2026-06-16)**: card BODY → `lifeos://home` (opens Home); red STOP button → `lifeos://stop-start?entry=…` (stops + new-task sheet). Widget split (body uses `applyWidgetURL`; stop button uses `Link(URL(string:))`).
 > - Credential gotcha (cost 2 builds): the dev (internal/ad-hoc) profile must be **deleted + recreated** while logged into Apple *after* Push is enabled on the App ID.
 > - DEFERRED: 2 timers in ONE Live Activity for the Dynamic Island (see `DUAL_TASK_PLAN.md`).
 
-### Dual-task (parallel timers, max 2) — 2026-06-16 (IMPLEMENTED, pending device test)
+### Dual-task (parallel timers, max 2) — ✅ PROVEN on device (2026-06-16)
 - Hard cap of 2 running timers enforced by DB trigger `enforce_max_running_timers` (all paths; pre-existing). Start sheet now hides the "Run alongside" toggle at 2 running and explains it; submit can't attempt a 3rd.
 - Home (`test3.tsx`): 2 running tasks render as an `A | B` split (equal halves + divider), each with its own live timer; 1 task keeps the full-width centre stage.
 - expo-live-activity `enablePushNotifications: true` → sets `aps-environment=development` + Info.plist `ExpoLiveActivity_EnablePushNotifications=true` (native then observes `pushToStartTokenUpdates`).
