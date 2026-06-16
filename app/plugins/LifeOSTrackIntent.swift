@@ -281,9 +281,9 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
       intent: StopIntent(),
       phrases: [
         "Stop \(\.$task) in \(.applicationName)",
-        "Stop \(\.$task) on \(.applicationName)",
         "End \(\.$task) in \(.applicationName)",
-        "\(.applicationName) stop \(\.$task)",
+        "End \(\.$task) on \(.applicationName)",
+        "\(.applicationName) end \(\.$task)",
       ],
       shortTitle: "Stop",
       systemImageName: "stop.circle"
@@ -291,8 +291,9 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
     AppShortcut(
       intent: StopDictateIntent(),
       phrases: [
+        "\(.applicationName) end",
+        "End in \(.applicationName)",
         "Stop in \(.applicationName)",
-        "Stop tracking in \(.applicationName)",
       ],
       shortTitle: "Stop entry",
       systemImageName: "stop.circle"
