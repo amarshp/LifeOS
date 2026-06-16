@@ -2,9 +2,9 @@ import {
   View, Text, ScrollView, StyleSheet, RefreshControl, ActivityIndicator,
   Pressable, Modal,
 } from 'react-native'
-import Svg, { Circle } from 'react-native-svg'
+import Svg, { Circle, Line } from 'react-native-svg'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useFocusEffect } from 'expo-router'
+import { useFocusEffect, useRouter } from 'expo-router'
 import { subscribeTimerChange } from '../../src/lib/timer-events'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
@@ -424,6 +424,7 @@ const CALIBRATION_LOOKBACK = 14
 
 export default function InsightsScreen() {
   const { weekStartsOn, colors: tc } = useSettings()
+  const router = useRouter()
   const [entries, setEntries] = useState<InsightEntry[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [blocks, setBlocks] = useState<CalendarBlock[]>([])
@@ -570,7 +571,15 @@ export default function InsightsScreen() {
       <ScrollView style={s.scroll} contentContainerStyle={s.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={tc.text3} />}>
 
-        <Text style={[s.title, { color: tc.text1 }]}>Insights</Text>
+        <View style={s.titleRow}>
+          <Text style={[s.title, { color: tc.text1 }]}>Insights</Text>
+          <Pressable onPress={() => router.push('/search')} hitSlop={12} style={s.searchBtn}>
+            <Svg width={20} height={20} viewBox="0 0 20 20">
+              <Circle cx={8.5} cy={8.5} r={5.5} stroke={tc.text3} strokeWidth={1.6} fill="none" />
+              <Line x1={12.8} y1={12.8} x2={17} y2={17} stroke={tc.text3} strokeWidth={1.6} strokeLinecap="round" />
+            </Svg>
+          </Pressable>
+        </View>
         <SegmentedControl period={period} onChange={setPeriod} tc={tc} />
 
         {/* ── Diagnosis cards (the payoff) ── */}
@@ -796,7 +805,9 @@ const s = StyleSheet.create({
   scroll: { flex: 1 },
   content: { paddingHorizontal: 22, paddingTop: 60, paddingBottom: 48 },
 
-  title: { fontSize: 32, fontFamily: fonts.displayBold, letterSpacing: -0.8, marginBottom: 16 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  title: { fontSize: 32, fontFamily: fonts.displayBold, letterSpacing: -0.8 },
+  searchBtn: { padding: 6 },
 
   segment: { flexDirection: 'row', borderRadius: 12, borderWidth: 1, padding: 3, marginBottom: 24 },
   segmentBtn: { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center' },

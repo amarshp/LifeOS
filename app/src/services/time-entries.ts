@@ -202,6 +202,26 @@ export async function clearReviewTag(id: string, tags: string[]): Promise<void> 
   await updateEntry(id, { tags: tags.filter((t) => t !== REVIEW_TAG) })
 }
 
+// Global entry search: title match (case-insensitive) and/or category filter,
+// newest first. Empty query + no category returns the most recent entries.
+export async function searchEntries(opts: {
+  query?: string
+  categoryId?: string | null
+}): Promise<TimeEntry[]> {
+  let q = supabase.from('time_entries').select('*').is('deleted_at', null)
+  if (opts.categoryId) q = q.eq('category_id', opts.categoryId)
+  const text = opts.query?.trim()
+  if (text) q = q.ilike('title', `%${text}%`)
+
+  const { data, error } = await q
+    .order('start_time', { ascending: false })
+    .limit(200)
+    .returns<TimeEntry[]>()
+
+  if (error) throw error
+  return data
+}
+
 export async function addCompletedEntry(entry: {
   category_id: string
   title: string
