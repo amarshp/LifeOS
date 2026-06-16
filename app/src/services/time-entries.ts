@@ -72,7 +72,21 @@ export async function startTimerStopPrevious(params: {
   notes?: string | null
 }): Promise<string> {
   if (params.startTime) {
-    await stopAllTimers()
+    // Chain: end the running timer(s) EXACTLY at the new start time (the handoff)
+    // instead of now(), so sequential tasks are contiguous — no clean-minute
+    // gap/overlap. Clamp so a start backdated before a running timer's own start
+    // can't invert it (that timer just ends at its start).
+    const running = await getRunningTimers()
+    const handoffMs = new Date(params.startTime).getTime()
+    for (const r of running) {
+      const startMs = new Date(r.start_time).getTime()
+      const endIso = handoffMs > startMs ? params.startTime : r.start_time
+      const { error: stopErr } = await supabase
+        .from('time_entries')
+        .update({ is_running: false, end_time: endIso } as unknown as Record<string, unknown>)
+        .eq('id', r.id)
+      if (stopErr) throw stopErr
+    }
     const entry = await startTimer({
       category_id: params.categoryId,
       title: params.title,

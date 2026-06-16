@@ -116,10 +116,17 @@ function hourToPxWithHeight(time: string, railHeight: number, startHour = START_
   return (hours - startHour) * (railHeight / (endHour - startHour))
 }
 
-function timeRangeOverlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+// Overlap test. `tolMs` ignores tiny overlaps: the split-into-columns lanes use
+// a 1-min tolerance so sequential tasks with minute-rounding drift (e.g. a new
+// entry started at HH:MM:00 while the previous stopped at HH:MM:43) don't render
+// as two parallel columns. Real parallel tasks overlap by minutes and still split.
+function timeRangeOverlaps(aStart: number, aEnd: number, bStart: number, bEnd: number, tolMs = 0): boolean {
   if (![aStart, aEnd, bStart, bEnd].every(Number.isFinite)) return false
-  return aStart < bEnd && bStart < aEnd
+  return Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > tolMs
 }
+
+// Below this, an overlap is treated as accidental drift, not real parallelism.
+const LANE_OVERLAP_TOL_MS = 60_000
 
 function dateAtLocalMinutes(date: string, minutes: number): Date {
   const [y, mo, d] = date.split('-').map(Number)
@@ -671,7 +678,7 @@ export default function DayScreen() {
       .filter(other => {
         const os = new Date(other.start_time).getTime()
         const oe = new Date(other.end_time).getTime()
-        return timeRangeOverlaps(blockStart, blockEnd, os, oe)
+        return timeRangeOverlaps(blockStart, blockEnd, os, oe, LANE_OVERLAP_TOL_MS)
       })
       .sort((a, b) =>
         new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
@@ -687,7 +694,7 @@ export default function DayScreen() {
     const overlapsEntry = actualEntries.some(e => {
       const es = new Date(e.start_time).getTime()
       const ee = new Date(e.end_time ?? now.toISOString()).getTime()
-      return timeRangeOverlaps(blockStart, blockEnd, es, ee)
+      return timeRangeOverlaps(blockStart, blockEnd, es, ee, LANE_OVERLAP_TOL_MS)
     })
     return overlapsEntry ? LEFT_HALF_LANE : FULL_LANE
   }, [actualEntries, visibleBlocks, now])
@@ -700,7 +707,7 @@ export default function DayScreen() {
       .filter(other => {
         const otherStart = new Date(other.start_time).getTime()
         const otherEnd = new Date(other.end_time ?? fallbackEnd).getTime()
-        return timeRangeOverlaps(entryStart, entryEnd, otherStart, otherEnd)
+        return timeRangeOverlaps(entryStart, entryEnd, otherStart, otherEnd, LANE_OVERLAP_TOL_MS)
       })
       .sort((a, b) => (
         new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
@@ -717,13 +724,13 @@ export default function DayScreen() {
     const overlapsBlock = visibleBlocks.some(b => {
       const bs = new Date(b.start_time).getTime()
       const be = new Date(b.end_time).getTime()
-      return timeRangeOverlaps(entryStart, entryEnd, bs, be)
+      return timeRangeOverlaps(entryStart, entryEnd, bs, be, LANE_OVERLAP_TOL_MS)
     })
     if (overlapsBlock) return RIGHT_HALF_LANE
 
     const overlapsRunning = timer.running.some(r => {
       const rs = new Date(r.start_time).getTime()
-      return timeRangeOverlaps(entryStart, entryEnd, rs, now.getTime())
+      return timeRangeOverlaps(entryStart, entryEnd, rs, now.getTime(), LANE_OVERLAP_TOL_MS)
     })
     return overlapsRunning ? RIGHT_HALF_LANE : FULL_LANE
   }, [actualEntries, visibleBlocks, timer.running, now])
@@ -1184,7 +1191,7 @@ export default function DayScreen() {
                 const hasOverlappingActual = actualEntries.some(e => {
                   const es = new Date(e.start_time).getTime()
                   const ee = new Date(e.end_time ?? now.toISOString()).getTime()
-                  return timeRangeOverlaps(entryStartMs, now.getTime(), es, ee)
+                  return timeRangeOverlaps(entryStartMs, now.getTime(), es, ee, LANE_OVERLAP_TOL_MS)
                 })
                 return (
                   <Pressable

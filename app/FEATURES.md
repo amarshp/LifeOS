@@ -158,6 +158,10 @@ Recommended design (post Codex review — "Correct V1"):
 > - Credential gotcha (cost 2 builds): the dev (internal/ad-hoc) profile must be **deleted + recreated** while logged into Apple *after* Push is enabled on the App ID.
 > - DEFERRED: 2 timers in ONE Live Activity for the Dynamic Island (see `DUAL_TASK_PLAN.md`).
 
+### Day-view timeline — contiguous tasks (2026-06-16)
+- **Lane-split tolerance**: the 2-column (parallel) split now ignores overlaps ≤ 1 min, so sequential tasks with minute-rounding drift (a new entry at HH:MM:00 vs the previous stop at HH:MM:43) no longer render as two alternating columns. Real parallel tasks (overlap by minutes) still split. (`timeRangeOverlaps` gained a `tolMs` arg; lane checks pass `LANE_OVERLAP_TOL_MS`.)
+- **Contiguous chaining**: starting a new timer with a custom start time now ends the previous timer EXACTLY at that start (the handoff), instead of at now() — so tasks meet with no gap/overlap. Normal "start now" already chained (RPC uses one transaction-stable now()).
+
 ### Dual-task (parallel timers, max 2) — ✅ PROVEN on device (2026-06-16)
 - Hard cap of 2 running timers enforced by DB trigger `enforce_max_running_timers` (all paths; pre-existing). Start sheet now hides the "Run alongside" toggle at 2 running and explains it; submit can't attempt a 3rd.
 - Home (`test3.tsx`): 2 running tasks render as an `A | B` split (equal halves + divider), each with its own live timer; 1 task keeps the full-width centre stage.
