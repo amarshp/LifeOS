@@ -97,6 +97,16 @@ Deno.serve(async (req) => {
     const startable = (r.action === 'start' || r.action === 'parallel') && r.is_running !== false
     if (startable && cred.push_to_start_token && r.entry_id) {
       const startMs = r.start_time ? Date.parse(r.start_time) : Date.now()
+      // Stamp BEFORE sending so the client knows a push-started card exists (skip
+      // it on reconcile) — a null stamp means start a local fallback card. Stamp
+      // first: if the push then fails there's no card AND the stamp is set, so the
+      // client skips it (same as the previously-shipped always-skip behavior, no
+      // duplicate). Stamping after the push would risk card-exists + stamp-null
+      // (push ok, update throws) → a duplicate local card.
+      await admin
+        .from('time_entries')
+        .update({ push_started_at: new Date().toISOString() })
+        .eq('id', r.entry_id)
       await sendPushToStart({
         token: cred.push_to_start_token,
         title: r.title ?? title,
@@ -104,13 +114,6 @@ Deno.serve(async (req) => {
         startMs: Number.isFinite(startMs) ? startMs : Date.now(),
       })
       push = { sent: true }
-      // Stamp the entry so the client knows a push-started card already exists
-      // (skip it on reconcile); a null stamp means the client should start a
-      // local fallback card. Best-effort — never fail the request on this.
-      await admin
-        .from('time_entries')
-        .update({ push_started_at: new Date().toISOString() })
-        .eq('id', r.entry_id)
     }
   } catch (e) {
     push = { sent: false, error: e instanceof Error ? e.message : String(e) }

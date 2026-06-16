@@ -87,6 +87,14 @@ itself is unverified until you run the new build on device.**
 
 ---
 
+## Known limitations
+- **A2 false positive**: the runaway notification is cancelled only by
+  `reconcileRunawayNotifications`, which runs when the app is open. If you stop a
+  timer **via Siri while the app stays closed** and don't reopen within 6h, the
+  runaway notification still fires for an already-stopped timer. Inherent to a
+  local-only schedule (no background task to re-check the DB at fire time);
+  cancelling from the native stop intent would be bespoke Swift (same bucket as A4).
+
 ## Notes
 - Prod changes made autonomously this session: migration `20260617_001` applied; `voice-track`
   redeployed. Both safe for the live app.
