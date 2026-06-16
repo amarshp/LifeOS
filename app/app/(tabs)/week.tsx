@@ -414,19 +414,28 @@ export default function WeekScreen() {
 
                 {/* Actual entries (non-running) — overlapping entries split left/right; entries beside a block go right */}
                 {(() => {
-                  const completedEntries = allDayEntries.filter(e => !e.is_running)
+                  // Entries INTERSECTING this day (incl. cross-midnight ones that
+                  // started the previous day), clamped to the column via daySegmentPx
+                  // — mirrors block rendering. Fixes long/overnight entries that were
+                  // bucketed only to their start day and got a negative (8px) height.
+                  const nowIso = now.toISOString()
+                  const completedEntries = weekEntries.filter(e =>
+                    !e.is_running &&
+                    daySegmentPx(e.start_time, e.end_time ?? nowIso, dateStr, pxPerHour) !== null
+                  )
                   const dayBlocks = visibleWeekBlocks.filter(b => daySegmentPx(b.start_time, b.end_time, dateStr, pxPerHour) !== null)
-                  const lanes = computeEntryLanes(completedEntries, dayBlocks, now.toISOString())
+                  const lanes = computeEntryLanes(completedEntries, dayBlocks, nowIso)
                   return completedEntries.map(entry => {
+                    const seg = daySegmentPx(entry.start_time, entry.end_time ?? nowIso, dateStr, pxPerHour)
+                    if (!seg) return null
                     const cat = categories.find(c => c.id === entry.category_id)
                     const catColor = cat?.color ?? tc.text3
-                    const top = hourToPx(entry.start_time)
-                    const endTime = entry.end_time ?? now.toISOString()
-                    const height = Math.max(hourToPx(endTime) - top, 8)
+                    const top = seg.top
+                    const height = Math.max(seg.height, 8)
                     const lane = lanes.get(entry.id) ?? 'full'
                     return (
                       <View
-                        key={entry.id}
+                        key={`${entry.id}:${dateStr}`}
                         style={[s.block, {
                           top,
                           height,
