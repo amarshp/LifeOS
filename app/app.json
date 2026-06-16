@@ -32,6 +32,7 @@
       "expo-secure-store",
       "expo-font",
       "expo-web-browser",
+      "expo-notifications",
       "./plugins/withLiveActivityStopButton",
       "./plugins/withTrackIntent",
       ["expo-live-activity", { "enablePushNotifications": true }],

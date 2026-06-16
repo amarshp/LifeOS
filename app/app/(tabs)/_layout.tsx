@@ -9,6 +9,7 @@ import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
+import { reconcileRunawayNotifications } from '../../src/lib/runawayNotify'
 import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
 import { ensureVoiceCredential } from '../../src/lib/voiceCredential'
 import { registerPushToStartToken } from '../../src/lib/pushToStartToken'
@@ -82,6 +83,7 @@ export default function TabLayout() {
   // Single instance: this tab root mounts once.
   useEffect(() => {
     reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
+    reconcileRunawayNotifications(timer.running).catch(() => {})
   }, [timer.running, nextPlanned])
 
   // Apply queued Siri "track" commands whenever the app returns to foreground
