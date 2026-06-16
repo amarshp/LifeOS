@@ -517,6 +517,16 @@ export default function InsightsScreen() {
   if (loading) {
     return <View style={[s.safe, { backgroundColor: tc.bg, alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator color={tc.text3} /></View>
   }
+  if (entries.length === 0) {
+    return (
+      <View style={[s.safe, { backgroundColor: tc.bg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 48 }]}>
+        <Text style={{ fontSize: 19, fontFamily: fonts.displayItalic, color: tc.text2, textAlign: 'center' }}>No time tracked yet</Text>
+        <Text style={{ fontSize: 13, fontFamily: fonts.ui, color: tc.text4, textAlign: 'center', marginTop: 12, lineHeight: 20 }}>
+          Start a timer from Home or the Day view. Your trends, streaks, and breakdowns will appear here.
+        </Text>
+      </View>
+    )
+  }
   if (!data || !pva) return <View style={[s.safe, { backgroundColor: tc.bg }]} />
 
   const periodWord = period === 'day' ? 'today' : period === 'week' ? 'this week' : 'this month'
