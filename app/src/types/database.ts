@@ -208,6 +208,7 @@ export interface TimeEntry {
   tags: string[]
   notes: string | null
   command_id: string | null
+  push_started_at: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null

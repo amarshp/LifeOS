@@ -104,6 +104,13 @@ Deno.serve(async (req) => {
         startMs: Number.isFinite(startMs) ? startMs : Date.now(),
       })
       push = { sent: true }
+      // Stamp the entry so the client knows a push-started card already exists
+      // (skip it on reconcile); a null stamp means the client should start a
+      // local fallback card. Best-effort — never fail the request on this.
+      await admin
+        .from('time_entries')
+        .update({ push_started_at: new Date().toISOString() })
+        .eq('id', r.entry_id)
     }
   } catch (e) {
     push = { sent: false, error: e instanceof Error ? e.message : String(e) }
