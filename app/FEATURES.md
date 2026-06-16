@@ -7,6 +7,7 @@
 - Parallel timers: run multiple timers simultaneously; "Run alongside current timer" checkbox in the add sheet keeps the previous timer running
 - Stop-and-start: tap the stop button in the running-timer banner to stop the current timer and immediately open a new one
 - Running timer banner: persistent bar at the top of all non-home tabs showing the timer title, elapsed time, category-coloured pulse dot, and quick-stop button
+- Runaway-timer guard: a local notification fires at start + 6h for each running timer (even when the app is closed) so a forgotten timer nudges you to stop/review it; cancelled automatically on stop (`runawayNotify.ts`, reconciled from the tab root alongside Live Activities)
 
 ### Log Past Entry
 - Log a completed time block with explicit start and end times (no running timer)
@@ -57,6 +58,7 @@
 - Tap any entry or block to edit it inline (time, category, tags, name)
 - Tap a gap in the timeline to log a past entry for that time slot
 - Navigate between days by swiping or tapping the date header
+- Undo delete: deleting an entry or block shows a 5-second bottom toast with UNDO (soft-delete + `restoreEntry`/`restoreBlock`)
 - Pinch-to-zoom with wider range (0.3×–8×) for fine-grained or panoramic views; pinch snaps to discrete levels so it stays crisp (no stretch) and relayouts only on level change for smooth framerate
 - Hide sleep: toggle in Settings collapses the sleep window (configurable bedtime / wake time, default 11 PM–7 AM) out of the timeline so only waking hours are shown; per-hour pixel density stays constant
 
@@ -79,8 +81,20 @@
 - Sessions: average session length, longest session ever, 4-bucket histogram (<30m / 30–60m / 1–2h / 2h+)
 - Milestones: most hours in a day, longest session, longest streak, staleness alerts (not tracked in 7+ days)
 - Per-section ⓘ info popovers explain what each metric measures
+- Empty state: before any time is tracked, shows a "No time tracked yet" prompt instead of an all-zeros dashboard
+- Search affordance: a magnifier in the header opens the global entry search
 - Typography pass: larger, lower-tracking labels and a unified number font for legibility
 - Pull-to-refresh for fresh data
+
+## Search
+- Global entry search (`/search`): debounced case-insensitive title match across all days, with a horizontal category-filter chip row (All + each category)
+- Empty query shows the most recent entries; tap any result to edit it in the Day view
+- Reached from the magnifier in the Insights header
+
+## Review queue
+- `/review` lists every `review`-tagged entry (voice/Siri entries, which may be mis-heard) — running and completed, newest first
+- Each row opens the full edit sheet (Day view) or clears the `review` tag in one tap ("✓ Reviewed")
+- Home shows an "N entries need review →" pill when the count is above zero
 
 ## Categories
 - Create categories with a name and colour chosen from a palette
@@ -155,6 +169,7 @@ Recommended design (post Codex review — "Correct V1"):
 > - **Most reliable path = personal Shortcuts**: in the Shortcuts app, add the **"New LifeOS entry"** / **"Stop a LifeOS task"** actions and name them anything (e.g. **"Track"** / **"Finish"**) → "Hey Siri, Track" / "Hey Siri, Finish" with no app-name dependency (Siri sometimes splits "LifeOS" → "Life OS"). Run in background; same DB-write + Live-Activity behavior. Verified.
 > - **Foreground refresh**: the app reloads running state on every foreground (not only when the local queue had items), so a Siri/Edge-Function entry — which writes the DB with no local queue item — shows in the banner/Home/Insights immediately instead of staying stale.
 > - **Tap behavior — ✅ PROVEN on device (2026-06-16)**: card BODY → `lifeos://home` (opens Home); red STOP button → `lifeos://stop-start?entry=…` (stops + new-task sheet). Widget split (body uses `applyWidgetURL`; stop button uses `Link(URL(string:))`).
+> - **Offline / push-failure fallback (2026-06-17)**: the Edge Function stamps `push_started_at` on a successful push; `reconcileLiveActivities` starts a LOCAL card for a `command_id` voice entry only when that stamp is null (phone was offline → command queued + applied via RPC with no push, or the push failed). So a missing card still appears on next foreground without duplicating push-started cards. (Migration `20260617_001`; needs the new client build to take effect.)
 > - Credential gotcha (cost 2 builds): the dev (internal/ad-hoc) profile must be **deleted + recreated** while logged into Apple *after* Push is enabled on the App ID.
 > - DEFERRED: 2 timers in ONE Live Activity for the Dynamic Island (see `DUAL_TASK_PLAN.md`).
 
