@@ -18,7 +18,7 @@ export default function Test3Screen() {
     router, timer, now, colors: tc,
     categories, running, currentEntry, currentCategory,
     nextBlock, timelineEntries, trackedMs, plannedMs, elapsed, quote,
-    quickStartCategories,
+    quickStartCategories, reviewCount,
   } = useHomeData()
 
   const secondEntry = running[1]
@@ -53,6 +53,14 @@ export default function Test3Screen() {
         <Text style={[styles.date, { color: tc.text3 }]}>
           {now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} · {now.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()}
         </Text>
+
+        {reviewCount > 0 && (
+          <Pressable onPress={() => router.push('/review')} hitSlop={8} style={[styles.reviewPill, { borderColor: tc.border2 }]}>
+            <Text style={[styles.reviewText, { color: tc.text2 }]}>
+              {reviewCount} {reviewCount === 1 ? 'entry needs' : 'entries need'} review →
+            </Text>
+          </Pressable>
+        )}
 
         {/* Centre stage */}
         {currentEntry ? (
@@ -198,6 +206,9 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 32, paddingTop: 72, paddingBottom: 48 },
 
   date: { fontSize: 10.5, letterSpacing: 2.5, fontFamily: fonts.ui, fontWeight: '500', marginBottom: 36 },
+
+  reviewPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 7, marginBottom: 28, marginTop: -12 },
+  reviewText: { fontSize: 12.5, letterSpacing: 0.3, fontFamily: fonts.ui },
 
   timer: { fontSize: 68, lineHeight: 70, letterSpacing: -2.5, fontFamily: fonts.displayBold, fontVariant: ['tabular-nums'] },
   timerIdle: { fontSize: 52, letterSpacing: -1.5, fontFamily: fonts.displayItalic },

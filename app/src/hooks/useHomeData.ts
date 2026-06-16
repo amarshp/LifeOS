@@ -28,6 +28,7 @@ export function useHomeData() {
   const [todayEntries, setTodayEntries] = useState<TimeEntry[]>([])
   const [recentEntries, setRecentEntries] = useState<TimeEntry[]>([])
   const [categoryUsage, setCategoryUsage] = useState<Map<string, number>>(new Map())
+  const [reviewCount, setReviewCount] = useState(0)
 
   const today = todayStr()
 
@@ -46,6 +47,9 @@ export function useHomeData() {
       setRecentEntries(recent)
       timeEntriesService.getCategoryUsageNearHour(n.getHours(), n.getDay())
         .then(usage => setCategoryUsage(new Map(usage.map(u => [u.category_id, u.count]))))
+        .catch(() => {})
+      timeEntriesService.getEntriesNeedingReview()
+        .then(r => setReviewCount(r.length))
         .catch(() => {})
     } catch {}
   }, [today])
@@ -119,5 +123,6 @@ export function useHomeData() {
     quote,
     timelineEntries,
     quickStartCategories,
+    reviewCount,
   }
 }

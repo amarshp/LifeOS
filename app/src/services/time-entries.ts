@@ -170,6 +170,38 @@ export async function deleteEntry(id: string): Promise<void> {
   if (error) throw error
 }
 
+// Undo a soft-delete: clear deleted_at so the entry is live again.
+export async function restoreEntry(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('time_entries')
+    .update({ deleted_at: null } as unknown as Record<string, unknown>)
+    .eq('id', id)
+
+  if (error) throw error
+}
+
+const REVIEW_TAG = 'review'
+
+// Voice/Siri entries are tagged `review` (may be mis-heard). The review queue
+// surfaces them — running or completed — newest first, so they can be corrected.
+export async function getEntriesNeedingReview(): Promise<TimeEntry[]> {
+  const { data, error } = await supabase
+    .from('time_entries')
+    .select('*')
+    .contains('tags', [REVIEW_TAG])
+    .is('deleted_at', null)
+    .order('start_time', { ascending: false })
+    .returns<TimeEntry[]>()
+
+  if (error) throw error
+  return data
+}
+
+// One-tap "reviewed": drop the `review` tag so it leaves the queue.
+export async function clearReviewTag(id: string, tags: string[]): Promise<void> {
+  await updateEntry(id, { tags: tags.filter((t) => t !== REVIEW_TAG) })
+}
+
 export async function addCompletedEntry(entry: {
   category_id: string
   title: string
