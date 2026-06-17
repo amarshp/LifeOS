@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import * as calendarBlocksService from './calendar-blocks'
 import { expandRecurrence } from './calendar-blocks'
 import type {
   Todo,
@@ -11,7 +12,7 @@ import type {
   RecurrenceType,
 } from '../types/database'
 import { todayStr } from '../lib/date'
-import { addLocalDays } from '../lib/time-range'
+import { addLocalDays, resolveLocalRange } from '../lib/time-range'
 
 /**
  * Todos service — backlog of intentions that feed the day planner.
@@ -151,6 +152,33 @@ export async function completeTodo(todo: Todo): Promise<void> {
 /** Undo a one-off completion (used by the undo toast / reopen). */
 export async function reopenTodo(id: string): Promise<void> {
   await updateTodo(id, { status: 'open', completed_at: null })
+}
+
+// ─── Plan bridge ─────────────────────────────────────────────
+// Pull a todo into a day's plan: create a calendar_block (carrying todo_id) at a
+// default 1-hour slot the user then adjusts in the Day view. The todo stays in
+// the backlog until done — being planned is tracked via the block's todo_id.
+export async function addTodoToPlan(todo: Todo, date: string): Promise<void> {
+  if (!todo.category_id) throw new Error('Add a category to this task first, then plan it.')
+  const startHour = date === todayStr() ? Math.min(Math.max(new Date().getHours() + 1, 6), 22) : 9
+  const { start, end } = resolveLocalRange(date, startHour, 0, startHour + 1, 0)
+  await calendarBlocksService.createBlock({
+    category_id: todo.category_id,
+    title: todo.title,
+    date,
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    tags: [],
+    notes: todo.notes,
+    todo_id: todo.id,
+    source: 'manual',
+  })
+}
+
+/** Todo ids that already have a block on `date` (so the backlog shows Planned). */
+export async function getPlannedTodoIdsForDate(date: string): Promise<string[]> {
+  const blocks = await calendarBlocksService.getBlocksForDate(date)
+  return blocks.filter((b) => b.todo_id).map((b) => b.todo_id as string)
 }
 
 // ─── Steps ───────────────────────────────────────────────────
