@@ -36,6 +36,21 @@ export interface Database {
         Insert: DailyPlanItemInsert
         Update: DailyPlanItemUpdate
       }
+      todos: {
+        Row: Todo
+        Insert: TodoInsert
+        Update: TodoUpdate
+      }
+      todo_steps: {
+        Row: TodoStep
+        Insert: TodoStepInsert
+        Update: TodoStepUpdate
+      }
+      todo_completions: {
+        Row: TodoCompletion
+        Insert: TodoCompletionInsert
+        Update: never
+      }
     }
     Functions: {
       start_timer_stop_previous: {
@@ -159,6 +174,7 @@ export interface CalendarBlock {
   recurrence_end: string | null
   tags: string[]
   notes: string | null
+  todo_id: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -179,6 +195,7 @@ export interface CalendarBlockInsert {
   recurrence_end?: string | null
   tags?: string[]
   notes?: string | null
+  todo_id?: string | null
 }
 
 export interface CalendarBlockUpdate {
@@ -193,6 +210,7 @@ export interface CalendarBlockUpdate {
   recurrence_end?: string | null
   tags?: string[]
   notes?: string | null
+  todo_id?: string | null
   deleted_at?: string | null
 }
 
@@ -299,6 +317,7 @@ export interface DailyPlanItem {
   notes: string | null
   sort_order: number
   calendar_block_id: string | null
+  todo_id: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -316,6 +335,7 @@ export interface DailyPlanItemInsert {
   notes?: string | null
   sort_order?: number
   calendar_block_id?: string | null
+  todo_id?: string | null
 }
 
 export interface DailyPlanItemUpdate {
@@ -327,5 +347,105 @@ export interface DailyPlanItemUpdate {
   notes?: string | null
   sort_order?: number
   calendar_block_id?: string | null
+  todo_id?: string | null
   deleted_at?: string | null
+}
+
+// ─── Todos (backlog of intentions) ───────────────────────────
+// Timeless intentions with priority + deadline + one-level steps. Pulled into a
+// day's plan by the planner (manual or AI). Recurring todos roll forward:
+// never `status='done'` (that would hide them from the open index forever) —
+// "done today" = a todo_completions row + advanced next_due. See `todos.ts`.
+export type TodoStatus = 'open' | 'done'
+export type TodoPriority = 0 | 1 | 2 | 3 // none · low · med · high
+
+export interface Todo {
+  id: string
+  user_id: string
+  title: string
+  category_id: string | null
+  priority: TodoPriority
+  deadline: string | null
+  notes: string | null
+  status: TodoStatus
+  completed_at: string | null
+  recurrence: RecurrenceType
+  recurrence_days: number[] | null
+  next_due: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}
+
+export interface TodoInsert {
+  id?: string
+  user_id?: string
+  title: string
+  category_id?: string | null
+  priority?: TodoPriority
+  deadline?: string | null
+  notes?: string | null
+  status?: TodoStatus
+  recurrence?: RecurrenceType
+  recurrence_days?: number[] | null
+  next_due?: string | null
+  sort_order?: number
+}
+
+export interface TodoUpdate {
+  title?: string
+  category_id?: string | null
+  priority?: TodoPriority
+  deadline?: string | null
+  notes?: string | null
+  status?: TodoStatus
+  completed_at?: string | null
+  recurrence?: RecurrenceType
+  recurrence_days?: number[] | null
+  next_due?: string | null
+  sort_order?: number
+  deleted_at?: string | null
+}
+
+export interface TodoStep {
+  id: string
+  user_id: string
+  todo_id: string
+  title: string
+  done: boolean
+  sort_order: number
+  created_at: string
+  deleted_at: string | null
+}
+
+export interface TodoStepInsert {
+  id?: string
+  user_id?: string
+  todo_id: string
+  title: string
+  done?: boolean
+  sort_order?: number
+}
+
+export interface TodoStepUpdate {
+  title?: string
+  done?: boolean
+  sort_order?: number
+  deleted_at?: string | null
+}
+
+export interface TodoCompletion {
+  id: string
+  user_id: string
+  todo_id: string
+  completed_on: string
+  created_at: string
+}
+
+export interface TodoCompletionInsert {
+  id?: string
+  user_id?: string
+  todo_id: string
+  completed_on: string
 }
