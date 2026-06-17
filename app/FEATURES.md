@@ -96,6 +96,14 @@
 - Each row opens the full edit sheet (Day view) or clears the `review` tag in one tap ("✓ Reviewed")
 - Home shows an "N entries need review →" pill when the count is above zero
 
+## Todos / Backlog (Plan tab → Tasks)
+- A backlog of intentions (timeless until planned), separate from time-boxed blocks. Each todo: title, optional category, priority (none/low/med/high), deadline, notes, and a one-level ordered checklist of steps ("phases").
+- Recurrence (Once/Daily/Weekdays/M W F/Weekly): a recurring todo rolls forward — completing it records the occurrence and advances `next_due` (it never leaves the list); one-off todos complete and drop out. Completions are unique per occurrence (no streak inflation).
+- Plan tab has a **Plan / Tasks** toggle. Tasks shows the backlog grouped Overdue / Today / Upcoming / No date, with priority dot, deadline, step progress, and a ↻ marker for recurring.
+- **Add to plan**: "+ plan" on a todo creates a todo-linked `calendar_block` on the Plan tab's selected date (default 1-hour slot, adjust in Day) → it appears in Day/Week. Needs the todo to have a category.
+- The **AI/voice planner** sees open todos (priority, deadline, recurrence, category) as backlog and schedules the relevant ones into the day's plan — you don't pre-schedule; the plan is built on the day from tasks + priority.
+- Data: `todos` / `todo_steps` / `todo_completions` tables; `todo_id` bridge on `daily_plan_items` and `calendar_blocks` (migration `20260617_002`).
+
 ## Categories
 - Create categories with a name and colour chosen from a palette
 - Each category is Essential (have-to: sleep, food, bath, commute, calls) or Discretionary (chose-to: work, study, gym, leisure), set in the Settings category editor; new categories are auto-classified from their name and used to split Insights so essentials don't dominate the rankings
@@ -109,6 +117,13 @@
 
 ## Sheets
 - Bottom sheets share a draggable handle: drag it down to dismiss. Add/edit sheets save on drag-down; Settings editors (which auto-save) just close. Settings sheets use a clear "Done" button instead of a small ×
+
+## Plan (AI day-planner chat)
+- `Plan` tab: a conversational assistant that plans a single day. Pick the date (defaults to tomorrow), describe your day in plain language, and it asks clarifying questions, suggests a schedule, and proposes a concrete plan
+- Voice mode (two ways): (a) tap the mic in the input bar for push-to-talk; (b) tap the waveform button for **hands-free voice chat** — a ChatGPT-style full-screen loop (listen → transcribe → reply → speak → listen) with silence detection (mic metering VAD + hard-cap fallback). Tap the orb to interrupt/barge in, End to leave. Speech is transcribed via Whisper (`plan-transcribe`); replies are spoken on-device (`expo-speech`)
+- Structured turns: each reply is `{ reply, plan }` — `plan` stays empty until there's a concrete schedule, then refines as you adjust. Items map to your real categories (model is given category ids; hallucinated ids are dropped server-side)
+- Apply: one tap materializes the plan into `calendar_blocks` for that date (shows in Day/Week/Home). Replace semantics — re-applying wipes the prior AI plan for the day so there are never duplicates. Items with no matching category are reported, not silently dropped
+- Backed by `daily_plans` + `daily_plan_items` (provenance: source=ai, prompt, model, generated_at). OpenAI key stays server-side in the `plan-chat` edge function (gpt-4o-mini, JWT-verified)
 
 ## Live Activities (iOS)
 - Running timers appear on the Lock Screen + Dynamic Island, counting up live on-device (no push server) via expo-live-activity `elapsedTimer`
@@ -184,6 +199,9 @@ Recommended design (post Codex review — "Correct V1"):
 - RN `pushToStartToken.ts`: `addActivityPushToStartTokenListener` → `set_push_to_start_token(device_id, token)` RPC → stored on `voice_credentials.push_to_start_token` (migration `20260615_002`).
 - Prereq done: Push capability enabled on App ID `com.pedapatiamarsh.lifeos` + dev profile regenerated via `eas credentials`.
 - NEXT after token lands: server sends `start` push to `api.sandbox.push.apple.com`, topic `com.pedapatiamarsh.lifeos.push-type.liveactivity`, `apns-push-type: liveactivity` (needs APNs .p8 auth key). Then wire Siri/Edge Function to fire the push so the Island appears the instant the user speaks.
+
+## Google Calendar import (PLANNED — not built)
+- One-way, read-only: pull Google Calendar events via the Google API (add the Calendar scope to the existing Google OAuth) and show them as read-only blocks in the plan/Day/Week. Schema already supports it (`BlockSource = 'google_calendar'`). Tapping a meeting can start a timer against it. No embedded Google UI (the app already has its own timeline). Two-way sync deferred further.
 
 ## Other deferred
 - Lock-screen / home quick-start buttons: top-N tasks by historic use at the current time (one-tap start), beyond the generic text-box shortcut.
