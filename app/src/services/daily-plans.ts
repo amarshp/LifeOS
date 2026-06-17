@@ -17,8 +17,8 @@ import * as calendarBlocksService from './calendar-blocks'
  * + `generateDailyPlan()` hook below — a future Claude.ai integration only has
  * to implement `PlanGenerator`, nothing else in the app changes.
  *
- * No UI consumes this yet. It exists so plans can be added (manual today, AI
- * later) against a stable, scalable schema.
+ * Consumed by the Plan tab via `src/services/plan-chat.ts` (conversational AI
+ * planner) for the AI path; the manual/template paths reuse the same CRUD.
  */
 
 // ─── Plans ───────────────────────────────────────────────────
@@ -142,6 +142,7 @@ export async function materializePlan(planId: string, date: string): Promise<num
       end_time: item.end_time,
       tags: item.tags,
       notes: item.notes,
+      todo_id: item.todo_id,
     })
     await updatePlanItem(item.id, { calendar_block_id: block.id })
     created++

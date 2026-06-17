@@ -58,9 +58,13 @@ const RESPONSE_SCHEMA = {
                 type: ['string', 'null'],
                 description: 'MUST be one of the provided category ids, or null if none fits.',
               },
+              todo_id: {
+                type: ['string', 'null'],
+                description: 'If this item schedules one of the BACKLOG TASKS, set its todo id; else null. Never invent an id.',
+              },
               notes: { type: ['string', 'null'] },
             },
-            required: ['title', 'start_time', 'end_time', 'category_id', 'notes'],
+            required: ['title', 'start_time', 'end_time', 'category_id', 'todo_id', 'notes'],
           },
         },
       },
@@ -71,6 +75,7 @@ const RESPONSE_SCHEMA = {
 } as const
 
 interface BacklogTodo {
+  id: string
   title: string
   priority: number
   deadline: string | null
@@ -106,7 +111,7 @@ function buildSystemPrompt(
           else if (t.deadline) parts.push(`deadline ${t.deadline.slice(0, 10)}`)
           const cn = catName(t.category_id)
           if (cn) parts.push(cn)
-          return `- ${t.title}${parts.length ? ` (${parts.join(', ')})` : ''}`
+          return `- ${t.title}${parts.length ? ` (${parts.join(', ')})` : ''} → todo_id: ${t.id}`
         })
         .join('\n')
     : '(none)'
@@ -181,7 +186,7 @@ Deno.serve(async (req) => {
       .order('start_time'),
     supabase
       .from('todos')
-      .select('title, priority, deadline, next_due, recurrence, category_id')
+      .select('id, title, priority, deadline, next_due, recurrence, category_id')
       .eq('status', 'open')
       .is('deleted_at', null)
       .order('priority', { ascending: false }),
@@ -189,6 +194,7 @@ Deno.serve(async (req) => {
 
   const cats = (categories ?? []) as Array<{ id: string; name: string; kind: string }>
   const allowedIds = new Set(cats.map((c) => c.id))
+  const allowedTodoIds = new Set(((todos ?? []) as BacklogTodo[]).map((t) => t.id))
   const system = buildSystemPrompt(
     date,
     timezone,
@@ -232,11 +238,16 @@ Deno.serve(async (req) => {
     return json({ error: 'model returned non-JSON', content }, 502)
   }
 
-  // Defensive: drop any category_id the model hallucinated (RLS-safe set).
+  // Defensive: drop any category_id / todo_id the model hallucinated (RLS-safe sets).
   if (parsed.plan) {
     parsed.plan.items = (parsed.plan.items ?? []).map((it) => {
       const cid = it.category_id
-      return { ...it, category_id: typeof cid === 'string' && allowedIds.has(cid) ? cid : null }
+      const tid = it.todo_id
+      return {
+        ...it,
+        category_id: typeof cid === 'string' && allowedIds.has(cid) ? cid : null,
+        todo_id: typeof tid === 'string' && allowedTodoIds.has(tid) ? tid : null,
+      }
     })
   }
 

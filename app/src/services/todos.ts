@@ -138,7 +138,10 @@ export async function completeTodo(todo: Todo): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
-  const credited = todo.next_due ?? todayStr()
+  // "Mark done" means "I did this now" — credit TODAY and advance next_due from
+  // today, so a neglected recurring todo (next_due in the past) lands its next
+  // occurrence in the future instead of staying overdue after one tap.
+  const credited = todayStr()
   await supabase
     .from('todo_completions')
     .upsert(
