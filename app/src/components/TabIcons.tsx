@@ -54,6 +54,20 @@ export function WeekIcon({ color, size = 20 }: IconProps) {
   )
 }
 
+export function PlanIcon({ color, size = 20 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Path
+        d="M4 4h12a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 14H8l-3.5 3v-3H4a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 4 4z"
+        stroke={color}
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+      />
+      <Path d="M6.5 7.5h7M6.5 10.5h4" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+    </Svg>
+  )
+}
+
 export function InsightsIcon({ color, size = 20 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">

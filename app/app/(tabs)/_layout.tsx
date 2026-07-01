@@ -2,7 +2,7 @@ import { View, Text, Pressable, StyleSheet, Animated, Alert, AppState } from 're
 import { Tabs, useFocusEffect, useRouter, usePathname } from 'expo-router'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { colors, fonts } from '../../src/theme/tokens'
-import { HomeIcon, DayIcon, WeekIcon, InsightsIcon, SettingsIcon, NumberIcon } from '../../src/components/TabIcons'
+import { HomeIcon, DayIcon, WeekIcon, InsightsIcon, SettingsIcon, NumberIcon, PlanIcon } from '../../src/components/TabIcons'
 import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
@@ -235,6 +235,13 @@ export default function TabLayout() {
           options={{
             title: 'Day',
             tabBarIcon: ({ color }) => <DayIcon color={color as string} size={22} />,
+          }}
+        />
+        <Tabs.Screen
+          name="plan"
+          options={{
+            title: 'Plan',
+            tabBarIcon: ({ color }) => <PlanIcon color={color as string} size={22} />,
           }}
         />
         <Tabs.Screen

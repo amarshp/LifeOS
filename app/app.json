@@ -35,8 +35,19 @@
       "expo-notifications",
       "./plugins/withLiveActivityStopButton",
       "./plugins/withTrackIntent",
-      ["expo-live-activity", { "enablePushNotifications": true }],
-      "./plugins/withPublicLiveActivityAttributes"
+      [
+        "expo-live-activity",
+        {
+          "enablePushNotifications": true
+        }
+      ],
+      "./plugins/withPublicLiveActivityAttributes",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow LifeOS to use the microphone so you can talk to your day planner."
+        }
+      ]
     ],
     "extra": {
       "router": {},
