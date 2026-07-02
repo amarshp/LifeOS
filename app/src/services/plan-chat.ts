@@ -46,6 +46,8 @@ export interface ProposedPlan {
 export interface ChatTurn {
   reply: string
   plan: ProposedPlan | null
+  /** Human-readable log of real data changes the agent made this turn. */
+  actions: string[]
   model: string
 }
 
@@ -68,7 +70,12 @@ export async function sendMessage(
   })
   if (error) throw new Error(error.message || 'plan-chat failed')
   if (data?.error) throw new Error(data.error)
-  return { reply: data.reply ?? '', plan: data.plan ?? null, model: data.model ?? 'unknown' }
+  return {
+    reply: data.reply ?? '',
+    plan: data.plan ?? null,
+    actions: Array.isArray(data.actions) ? data.actions : [],
+    model: data.model ?? 'unknown',
+  }
 }
 
 const AUDIO_MIME: Record<string, string> = {

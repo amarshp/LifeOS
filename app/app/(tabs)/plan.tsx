@@ -114,6 +114,8 @@ export default function PlanScreen() {
         setMessages((m) => [...m, { role: 'assistant', content: turn.reply }])
         setPlan(turn.plan)
         setModel(turn.model)
+        // Agent changed real data (timers/blocks) → refresh Home/Day views.
+        if (turn.actions.length > 0) emitTimerChange()
         scrollToEnd()
         return turn
       } catch (e) {
