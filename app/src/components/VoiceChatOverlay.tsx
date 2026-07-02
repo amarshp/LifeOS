@@ -7,7 +7,7 @@ import {
   setAudioModeAsync,
   type RecordingStatus,
 } from 'expo-audio'
-import * as Speech from 'expo-speech'
+import * as tts from '../lib/tts'
 import * as Haptics from 'expo-haptics'
 import { fonts } from '../theme/tokens'
 import type { ColorPalette } from '../theme/tokens'
@@ -135,13 +135,10 @@ export function VoiceChatOverlay({ visible, colors, onClose, transcribe, onTurn 
       // iOS: leave record mode before speaking, or TTS routes to the earpiece.
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => {})
       setPhase('speaking')
-      Speech.stop()
-      Speech.speak(reply || 'Okay.', {
-        rate: 1.0,
+      void tts.speak(reply || 'Okay.', {
         onDone: () => {
           if (activeRef.current) void startListening()
         },
-        onStopped: () => {},
         onError: () => {
           if (activeRef.current) void startListening()
         },
@@ -195,7 +192,7 @@ export function VoiceChatOverlay({ visible, colors, onClose, transcribe, onTurn 
     return () => {
       cancelled = true
       activeRef.current = false
-      Speech.stop()
+      tts.stop()
       recorder.stop().catch(() => {})
     }
   }, [visible]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -205,7 +202,7 @@ export function VoiceChatOverlay({ visible, colors, onClose, transcribe, onTurn 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     const phase = statusRef.current
     if (phase === 'speaking') {
-      Speech.stop()
+      tts.stop()
       void startListening()
     } else if (phase === 'paused') {
       emptyCountRef.current = 0
@@ -219,7 +216,7 @@ export function VoiceChatOverlay({ visible, colors, onClose, transcribe, onTurn 
 
   const handleClose = useCallback(() => {
     activeRef.current = false
-    Speech.stop()
+    tts.stop()
     recorder.stop().catch(() => {})
     onClose()
   }, [recorder, onClose])

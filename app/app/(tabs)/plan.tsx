@@ -20,7 +20,7 @@ import {
   RecordingPresets,
   setAudioModeAsync,
 } from 'expo-audio'
-import * as Speech from 'expo-speech'
+import * as tts from '../../src/lib/tts'
 import * as Haptics from 'expo-haptics'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
@@ -90,7 +90,7 @@ export default function PlanScreen() {
   useEffect(() => {
     setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {})
     return () => {
-      Speech.stop()
+      tts.stop()
     }
   }, [])
 
@@ -134,10 +134,10 @@ export default function PlanScreen() {
   const send = useCallback(
     async (text: string) => {
       if (!text.trim() || sending) return
-      Speech.stop()
+      tts.stop()
       setInput('')
       const turn = await runTurn(text)
-      if (turn && ttsOn && turn.reply) Speech.speak(turn.reply, { rate: 1.0 })
+      if (turn && ttsOn && turn.reply) void tts.speak(turn.reply)
     },
     [sending, ttsOn, runTurn],
   )
@@ -170,7 +170,7 @@ export default function PlanScreen() {
       Alert.alert('Microphone', 'Enable microphone access to talk to your planner.')
       return
     }
-    Speech.stop()
+    tts.stop()
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     await recorder.prepareToRecordAsync()
     recorder.record()
@@ -199,7 +199,7 @@ export default function PlanScreen() {
   // Changing the day starts a fresh planning session — otherwise a plan proposed
   // for one date could be Applied to another.
   const shiftDate = useCallback((delta: number) => {
-    Speech.stop()
+    tts.stop()
     setDate((d) => addLocalDays(d, delta))
     setMessages([])
     setPlan(null)
@@ -233,7 +233,7 @@ export default function PlanScreen() {
         </Pressable>
         <Pressable
           onPress={() => {
-            Speech.stop()
+            tts.stop()
             setVoiceOpen(true)
           }}
           hitSlop={10}
