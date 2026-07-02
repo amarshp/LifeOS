@@ -47,6 +47,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setState({ session, user: session?.user ?? null, loading: false })
+    }).catch(() => {
+      // Backend unreachable (e.g. paused project) must not wedge the auth
+      // gate — fall through to signed-out UI.
+      setState({ session: null, user: null, loading: false })
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(

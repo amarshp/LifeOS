@@ -47,7 +47,8 @@
         {
           "microphonePermission": "Allow LifeOS to use the microphone so you can talk to your day planner."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "extra": {
       "router": {},

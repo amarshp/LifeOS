@@ -11,6 +11,7 @@ import {
   PlayfairDisplay_700Bold,
 } from '@expo-google-fonts/playfair-display'
 import { JetBrainsMono_400Regular, JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono'
+import * as SplashScreen from 'expo-splash-screen'
 import { AuthProvider, useAuth } from '../src/contexts/AuthContext'
 import { SettingsProvider, useSettings } from '../src/contexts/SettingsContext'
 import { colors } from '../src/theme/tokens'
@@ -56,6 +57,12 @@ export default function RootLayout() {
     JetBrainsMono_400Regular,
     JetBrainsMono_500Medium,
   })
+
+  useEffect(() => {
+    // Standalone release builds hang on the native splash forever without an
+    // explicit hide (expo-router's auto-hide does not fire for this app).
+    SplashScreen.hideAsync().catch(() => {})
+  }, [])
 
   if (!fontsLoaded && Platform.OS !== 'web') {
     return (
