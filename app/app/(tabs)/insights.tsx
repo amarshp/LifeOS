@@ -34,6 +34,10 @@ function fmtH(ms: number): string {
   if (m === 0) return `${h}h`
   return `${h}h ${m}m`
 }
+
+function formatSleepTarget(hours: number): string {
+  return Number.isInteger(hours) ? `${hours}h` : `${Math.floor(hours)}h 30m`
+}
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
@@ -423,7 +427,7 @@ const CALIBRATION_MIN_DAYS = 3
 const CALIBRATION_LOOKBACK = 14
 
 export default function InsightsScreen() {
-  const { weekStartsOn, colors: tc } = useSettings()
+  const { weekStartsOn, expectedSleepHours, colors: tc } = useSettings()
   const router = useRouter()
   const [entries, setEntries] = useState<InsightEntry[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -491,6 +495,18 @@ export default function InsightsScreen() {
   }, [blocks, entries, categories, nowTs])
 
   const catById = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories])
+
+  // Avg tracked sleep per night this period, vs the Settings target.
+  const sleepAvgMs = useMemo(() => {
+    if (!data) return null
+    const sleepCat = categories.find(c => c.name.trim().toLowerCase() === 'sleep')
+    if (!sleepCat) return null
+    const ms = data.byCategory[sleepCat.id] ?? 0
+    if (ms === 0) return null
+    const win = getPeriodWindows(period, new Date(nowTs), weekStartsOn)
+    const days = Math.max(1, Math.round((win.now - win.curStart) / 86_400_000))
+    return ms / days
+  }, [data, categories, period, nowTs, weekStartsOn])
 
   const activeCats = useMemo(
     () => categories.filter(c => (data?.categoryStats[c.id]?.allTimeMs ?? 0) > 0),
@@ -753,6 +769,20 @@ export default function InsightsScreen() {
             <Text style={[s.microLabel, { color: tc.text3 }]}>BEST STREAK</Text>
           </View>
         </View>
+        {sleepAvgMs !== null && (
+          <View style={[s.twoCol, { marginTop: 16 }]}>
+            <View style={s.microStat}>
+              <Text style={[s.microValue, { color: tc.text1 }]}>{fmtH(sleepAvgMs)}</Text>
+              <Text style={[s.microLabel, { color: tc.text3 }]}>AVG SLEEP / NIGHT</Text>
+            </View>
+            <View style={s.microStat}>
+              <Text style={[s.microValue, { color: sleepAvgMs >= expectedSleepHours * 3_600_000 ? tc.text1 : '#E0785C' }]}>
+                {formatSleepTarget(expectedSleepHours)}
+              </Text>
+              <Text style={[s.microLabel, { color: tc.text3 }]}>SLEEP TARGET</Text>
+            </View>
+          </View>
+        )}
         <View style={{ marginTop: 20 }}><HeatmapGrid quarters={quarters} tc={tc} /></View>
 
         <Divider color={tc.border} />

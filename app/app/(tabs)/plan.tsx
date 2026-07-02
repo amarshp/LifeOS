@@ -57,7 +57,7 @@ function fmtHHMM(hhmm: string): string {
 }
 
 export default function PlanScreen() {
-  const { colors } = useSettings()
+  const { colors, expectedSleepHours } = useSettings()
   const router = useRouter()
 
   const [date, setDate] = useState<string>(() => addLocalDays(todayStr(), 1))
@@ -110,7 +110,7 @@ export default function PlanScreen() {
       setSending(true)
       scrollToEnd()
       try {
-        const turn = await sendMessage(date, next)
+        const turn = await sendMessage(date, next, expectedSleepHours)
         setMessages((m) => [...m, { role: 'assistant', content: turn.reply }])
         setPlan(turn.plan)
         setModel(turn.model)
@@ -125,7 +125,7 @@ export default function PlanScreen() {
         scrollToEnd()
       }
     },
-    [date, scrollToEnd],
+    [date, scrollToEnd, expectedSleepHours],
   )
 
   // Typed/push-to-talk path: run the turn and read the reply aloud if TTS is on.

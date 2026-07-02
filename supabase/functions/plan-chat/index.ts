@@ -21,6 +21,7 @@ interface Body {
   date?: string // YYYY-MM-DD (local calendar day to plan)
   messages?: ChatMessage[]
   timezone?: string // IANA tz, for the model's awareness only
+  expected_sleep_hours?: number // user's nightly sleep target (Settings)
 }
 
 function json(data: unknown, status = 200): Response {
@@ -92,6 +93,7 @@ function buildSystemPrompt(
   categories: Array<{ id: string; name: string; kind: string }>,
   existing: Array<{ title: string; start_time: string; end_time: string }>,
   todos: BacklogTodo[],
+  expectedSleepHours: number,
 ): string {
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const catLines = categories.length
@@ -140,6 +142,7 @@ THE PLAN FIELD (structured output):
 - Every item needs start_time and end_time as 24-hour "HH:MM" local clock times.
 - Set category_id to the matching category's id from the list above, or null if nothing fits. Never invent an id.
 - Cover the meaningful parts of the day in order, without overlaps.
+- SLEEP: the user's nightly sleep target is ${expectedSleepHours} hours. When they mention a bedtime (e.g. "I'll sleep at 11:15 PM"), add a Sleep item starting then and lasting the full ${expectedSleepHours} hours — the end_time will be an early-morning time smaller than the start_time (e.g. 23:15 → 07:45). That is the ONLY item allowed to cross midnight; never cut sleep short at midnight.
 - When you include a plan, your "reply" should briefly summarize it and ask if they want changes.`
 }
 
@@ -161,6 +164,12 @@ Deno.serve(async (req) => {
     return json({ error: 'missing date or messages' }, 400)
   }
   const timezone = body.timezone || 'UTC'
+  const expectedSleepHours =
+    typeof body.expected_sleep_hours === 'number' &&
+    body.expected_sleep_hours >= 4 &&
+    body.expected_sleep_hours <= 12
+      ? body.expected_sleep_hours
+      : 8.5
 
   const url = Deno.env.get('SUPABASE_URL')
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
@@ -201,6 +210,7 @@ Deno.serve(async (req) => {
     cats,
     (blocks ?? []) as Array<{ title: string; start_time: string; end_time: string }>,
     (todos ?? []) as BacklogTodo[],
+    expectedSleepHours,
   )
 
   let openaiRes: Response

@@ -49,6 +49,7 @@ const SNAP_OPTIONS: SnapDragTo[] = [5, 10, 15, 30]
 const WEEK_START_OPTIONS: WeekStart[] = ['Monday', 'Sunday']
 const SLEEP_START_OPTIONS = [19, 20, 21, 22, 23, 0, 1, 2]
 const SLEEP_END_OPTIONS   = [4, 5, 6, 7, 8, 9, 10, 11]
+const EXPECTED_SLEEP_OPTIONS = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]
 
 function formatHour(h: number): string {
   const h12 = h % 12 || 12
@@ -56,7 +57,11 @@ function formatHour(h: number): string {
   return `${h12} ${suffix}`
 }
 
-type SheetName = 'categories' | 'tags' | 'quickStart' | 'weekStart' | 'snap' | 'export' | 'sleepStart' | 'sleepEnd' | null
+function formatSleepHours(h: number): string {
+  return Number.isInteger(h) ? `${h} h` : `${h.toFixed(1)} h`
+}
+
+type SheetName = 'categories' | 'tags' | 'quickStart' | 'weekStart' | 'snap' | 'export' | 'sleepStart' | 'sleepEnd' | 'expectedSleep' | null
 type ExportFormat = 'json' | 'csv'
 
 interface ExportSnapshot {
@@ -373,6 +378,7 @@ export default function SettingsScreen() {
           <SettingsRow label="Show Week tab">
             <ToggleSwitch on={settings.showWeekTab} onToggle={() => settings.setShowWeekTab(!settings.showWeekTab)} />
           </SettingsRow>
+          <SettingsRow label="Expected sleep" sub={formatSleepHours(settings.expectedSleepHours)} onPress={() => setActiveSheet('expectedSleep')} />
           <SettingsRow label="Hide sleep">
             <ToggleSwitch on={settings.hideSleep} onToggle={() => settings.setHideSleep(!settings.hideSleep)} />
           </SettingsRow>
@@ -448,6 +454,17 @@ export default function SettingsScreen() {
         getLabel={formatHour}
         getSub={() => ''}
         onSelect={settings.setSleepEnd}
+        onClose={() => setActiveSheet(null)}
+      />
+      <ChoiceSheet
+        visible={activeSheet === 'expectedSleep'}
+        title="Expected sleep"
+        subtitle="Nightly target — used by the AI planner and Insights"
+        options={EXPECTED_SLEEP_OPTIONS}
+        value={settings.expectedSleepHours}
+        getLabel={formatSleepHours}
+        getSub={() => ''}
+        onSelect={settings.setExpectedSleepHours}
         onClose={() => setActiveSheet(null)}
       />
     </View>

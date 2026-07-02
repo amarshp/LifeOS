@@ -58,9 +58,13 @@ function deviceTimezone(): string {
 }
 
 /** Send the conversation so far + target date; get the assistant's next turn. */
-export async function sendMessage(date: string, messages: ChatMessage[]): Promise<ChatTurn> {
+export async function sendMessage(
+  date: string,
+  messages: ChatMessage[],
+  expectedSleepHours?: number,
+): Promise<ChatTurn> {
   const { data, error } = await supabase.functions.invoke('plan-chat', {
-    body: { date, messages, timezone: deviceTimezone() },
+    body: { date, messages, timezone: deviceTimezone(), expected_sleep_hours: expectedSleepHours },
   })
   if (error) throw new Error(error.message || 'plan-chat failed')
   if (data?.error) throw new Error(data.error)

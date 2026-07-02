@@ -20,6 +20,7 @@ export interface Settings {
   hideSleep: boolean
   sleepStart: number  // 0–23, hour when sleep begins (default 23 = 11 PM)
   sleepEnd: number    // 0–23, hour when sleep ends / day view starts (default 7 = 7 AM)
+  expectedSleepHours: number // nightly sleep target (planner + insights), default 8.5
 }
 
 interface SettingsContextValue extends Settings {
@@ -34,6 +35,7 @@ interface SettingsContextValue extends Settings {
   setHideSleep: (v: boolean) => void
   setSleepStart: (v: number) => void
   setSleepEnd: (v: number) => void
+  setExpectedSleepHours: (v: number) => void
 }
 
 const defaults: Settings = {
@@ -47,6 +49,7 @@ const defaults: Settings = {
   hideSleep: false,
   sleepStart: 23,
   sleepEnd: 7,
+  expectedSleepHours: 8.5,
 }
 
 const SettingsContext = createContext<SettingsContextValue>({
@@ -62,6 +65,7 @@ const SettingsContext = createContext<SettingsContextValue>({
   setHideSleep: () => {},
   setSleepStart: () => {},
   setSleepEnd: () => {},
+  setExpectedSleepHours: () => {},
 })
 
 const KEY = '@lifeos_settings'
@@ -77,6 +81,7 @@ function normalizeSettings(raw: unknown): Settings {
   if (typeof next.hideSleep !== 'boolean') next.hideSleep = defaults.hideSleep
   if (typeof next.sleepStart !== 'number' || next.sleepStart < 0 || next.sleepStart > 23) next.sleepStart = defaults.sleepStart
   if (typeof next.sleepEnd !== 'number' || next.sleepEnd < 0 || next.sleepEnd > 23) next.sleepEnd = defaults.sleepEnd
+  if (typeof next.expectedSleepHours !== 'number' || next.expectedSleepHours < 4 || next.expectedSleepHours > 12) next.expectedSleepHours = defaults.expectedSleepHours
   return next
 }
 
@@ -124,6 +129,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     setHideSleep: (v) => persist({ hideSleep: v }),
     setSleepStart: (v) => persist({ sleepStart: v }),
     setSleepEnd: (v) => persist({ sleepEnd: v }),
+    setExpectedSleepHours: (v) => persist({ expectedSleepHours: v }),
   }
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>
