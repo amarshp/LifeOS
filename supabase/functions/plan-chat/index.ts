@@ -141,7 +141,8 @@ THE PLAN FIELD (structured output):
 - Set "plan" to null until you have a concrete, useful schedule. Once you do, fill it AND keep refining it on later turns as the user adjusts.
 - Every item needs start_time and end_time as 24-hour "HH:MM" local clock times.
 - Set category_id to the matching category's id from the list above, or null if nothing fits. Never invent an id.
-- Cover the meaningful parts of the day in order, without overlaps.
+- Cover the meaningful parts of the day in order. Items must not overlap UNLESS the user explicitly wants things in parallel.
+- PARALLEL ITEMS: when the user says things run in parallel / at the same time / while doing X, keep BOTH items at their full stated times even though they overlap (e.g. "study 7:30–10, calls 7:30–8 and 8–8:30 in parallel" → Study 19:30–22:00 PLUS Call 1 19:30–20:00 PLUS Call 2 20:00–20:30). Never shrink, split, or shift an item to avoid an overlap the user asked for. At most 2 items may run at any moment.
 - SLEEP: the user's nightly sleep target is ${expectedSleepHours} hours. When they mention a bedtime (e.g. "I'll sleep at 11:15 PM"), add a Sleep item starting then and lasting the full ${expectedSleepHours} hours — the end_time will be an early-morning time smaller than the start_time (e.g. 23:15 → 07:45). That is the ONLY item allowed to cross midnight; never cut sleep short at midnight.
 - When you include a plan, your "reply" should briefly summarize it and ask if they want changes.`
 }
