@@ -157,11 +157,11 @@
 
 # Roadmap / Planned (NOT yet built)
 
-## Plan chat v2 — feedback from first real use (2026-07-02)
-- **Better TTS voice**: replace robotic on-device `expo-speech` with a natural voice (e.g. OpenAI TTS via edge function, cached audio). Also cut response latency (streaming replies / faster model for planning turns).
-- **Parallel plan blocks**: planner must support overlapping items (e.g. calls 7:30–8 and 8–8:30 WHILE study 7:30–10 runs in parallel). Today it serializes them (study became 8:30–10). Needs schema + prompt support for overlap; Day view already renders 2 lanes.
-- **Expected-sleep setting**: new Settings field "expected sleep duration" (default 8.5h). "I sleep at 11:15 PM" → plan block 11:15 PM + expected duration (not hardcoded to midnight). Same value feeds the Insights/metrics sleep target.
-- **Chat as full in-app agent**: plan chat should be able to do anything the app can — add/remove/update schedule blocks AND live time-tracking ops (start/stop/fix entries). Killer flow: retroactive backfill — "forgot to fill: woke 8, ready till 8:30, drove till 9, work 9–now" while a stale sleep timer is still running → agent stops sleep at 8, inserts the missed entries, starts work. Needs tool-calling in the plan-chat edge function against entries CRUD.
+## Plan chat v2 — ✅ SHIPPED 2026-07-02 (same-day turnaround on first-use feedback)
+- **Natural TTS voice** ✅: `plan-tts` edge fn (OpenAI gpt-4o-mini-tts, voice "nova") replaces robotic expo-speech in chat + voice overlay; expo-speech kept as offline fallback. Planning-turn latency also dropped to ~4–5s (gpt-4.1-mini).
+- **Parallel plan blocks** ✅: planner preserves explicitly-parallel items at full stated times (max 2 concurrent); sequential plans stay overlap-free. QC'd on the exact 7:30–10-study + calls scenario.
+- **Expected-sleep setting** ✅: Settings → "Expected sleep" (6–10h, default 8.5h). Bedtime mention → full-duration sleep block (cross-midnight, e.g. 23:15→07:45); Insights Consistency shows avg sleep/night vs target.
+- **Chat as full in-app agent** ✅: plan-chat runs an OpenAI tool loop (10 tools: time entries + calendar blocks CRUD, RLS-scoped). Killer backfill flow verified live: stale running Sleep + "woke 8, ready till 8:30, drove till 9, work since" → sleep ended 8:00, missed periods logged w/ correct categories, running Work backdated to 9:00. Hallucination armor: date clamping, id validation, idempotency guards. Chat auto-refreshes Home/Day when the agent changes data.
 
 ## No-app-open live sync (Siri + Lock Screen Shortcut) — ✅ SHIPPED (see "APNs push-to-start" above)
 > STATUS 2026-06-16: **DONE.** DB-live + instant Live Activity while app-closed is built and the START path is device-proven. The "instant LA from a closed app" problem was solved with **APNs push-to-start** (Edge Function fires the push) + a background intent that **ends** activities locally — NOT by driving `Activity.request` from the intent (iOS forbids that). The design notes below ("Correct V1", HMAC/Keychain, "today it only enqueues") are **historical/superseded**; the shipped auth is a device-secret to the Edge Function and the shipped LA path is push-to-start. Remaining open item: 2 timers in one Live Activity for the Island (deferred — see `DUAL_TASK_PLAN.md`).
