@@ -13,7 +13,10 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const MODEL = 'gpt-4.1-mini'
-const MAX_TOOL_ROUNDS = 8
+const MAX_TOOL_ROUNDS = 5
+// Fail fast: a stalled upstream call must never ride into Supabase's 150s
+// wall-clock kill (WORKER_RESOURCE_LIMIT) — surface a retryable error instead.
+const OPENAI_TIMEOUT_MS = 45_000
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -726,6 +729,7 @@ Deno.serve(async (req) => {
     try {
       openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
+        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openaiKey}`,
@@ -733,6 +737,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           model: MODEL,
           temperature: 0.1,
+          max_completion_tokens: 2000,
           messages: convo,
           ...(lastRound ? {} : { tools: TOOLS }),
           response_format: {
@@ -742,7 +747,11 @@ Deno.serve(async (req) => {
         }),
       })
     } catch (e) {
-      return json({ error: `openai request failed: ${e instanceof Error ? e.message : String(e)}` }, 502)
+      const timedOut = e instanceof Error && e.name === 'TimeoutError'
+      return json(
+        { error: timedOut ? 'The assistant took too long — please try again.' : `openai request failed: ${e instanceof Error ? e.message : String(e)}` },
+        502,
+      )
     }
 
     if (!openaiRes.ok) {
