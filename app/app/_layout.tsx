@@ -24,11 +24,15 @@ function AuthGate() {
   useEffect(() => {
     if (loading) return
 
-    const inAuthGroup = segments[0] === '(auth)'
+    const segs = segments as string[]
+    const inAuthGroup = segs[0] === '(auth)'
+    // The bare "/" index is just a placeholder — signed-in users must be
+    // routed off it (fresh cold start restores the session while sitting there).
+    const atRoot = segs.length === 0 || segs[0] === 'index'
 
     if (!session && !inAuthGroup) {
       router.replace('/(auth)/sign-in')
-    } else if (session && inAuthGroup) {
+    } else if (session && (inAuthGroup || atRoot)) {
       router.replace('/(tabs)/test3')
     }
   }, [session, loading, segments])
