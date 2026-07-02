@@ -3,13 +3,13 @@ import { View, Text, Pressable, StyleSheet, Animated, Modal, Alert } from 'react
 import {
   useAudioRecorder,
   AudioModule,
-  RecordingPresets,
   setAudioModeAsync,
   type RecordingStatus,
 } from 'expo-audio'
 import * as tts from '../lib/tts'
 import * as Haptics from 'expo-haptics'
 import { fonts } from '../theme/tokens'
+import { SPEECH_RECORDING } from '../lib/speechRecording'
 import type { ColorPalette } from '../theme/tokens'
 
 /**
@@ -33,7 +33,7 @@ const HARD_CAP_MS = 15000 // max single turn length (also the no-metering turn l
 const TICK_MS = 200
 
 // Stable module-level options so the recorder isn't re-created each render.
-const METERED_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true }
+const METERED_OPTIONS = { ...SPEECH_RECORDING, isMeteringEnabled: true }
 
 type VoiceStatus = 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'paused'
 

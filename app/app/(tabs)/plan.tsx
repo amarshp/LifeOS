@@ -17,7 +17,6 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
   AudioModule,
-  RecordingPresets,
   setAudioModeAsync,
 } from 'expo-audio'
 import * as tts from '../../src/lib/tts'
@@ -27,6 +26,7 @@ import { fonts } from '../../src/theme/tokens'
 import { todayStr } from '../../src/lib/date'
 import { addLocalDays } from '../../src/lib/time-range'
 import { emitTimerChange } from '../../src/lib/timer-events'
+import { SPEECH_RECORDING } from '../../src/lib/speechRecording'
 import { VoiceChatOverlay } from '../../src/components/VoiceChatOverlay'
 import { TodoBacklog } from '../../src/components/TodoBacklog'
 import * as categoriesService from '../../src/services/categories'
@@ -77,7 +77,7 @@ export default function PlanScreen() {
     categoriesService.getCategories().then(setCategories).catch(() => {})
   }, [])
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY)
+  const recorder = useAudioRecorder(SPEECH_RECORDING)
   const recorderState = useAudioRecorderState(recorder)
   const scrollRef = useRef<ScrollView>(null)
   const firstPromptRef = useRef<string>('')

@@ -95,12 +95,18 @@ export async function transcribe(uri: string): Promise<string> {
   const mime = AUDIO_MIME[ext] ?? 'audio/m4a'
   const filename = `speech.${ext}`
   const base64 = await new File(uri).base64()
-  const { data, error } = await supabase.functions.invoke('plan-transcribe', {
-    body: { audio_base64: base64, mime, filename },
-  })
-  if (error) throw new Error(error.message || 'plan-transcribe failed')
-  if (data?.error) throw new Error(data.error)
-  return (data.text ?? '').trim()
+
+  // One automatic retry: the upload dies on transient link drops ("Failed to
+  // send a request to the Edge Function"), and a straight resend usually lands.
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await supabase.functions.invoke('plan-transcribe', {
+      body: { audio_base64: base64, mime, filename },
+    })
+    if (!error && !data?.error) return (data.text ?? '').trim()
+    lastErr = new Error(error?.message || data?.error || 'plan-transcribe failed')
+  }
+  throw lastErr ?? new Error('plan-transcribe failed')
 }
 
 function hhmm(value: string): { h: number; m: number } {
