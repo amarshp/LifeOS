@@ -20,6 +20,10 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - Hold-to-talk chosen over live streaming transcription — Whisper is batch; true live transcribe needs expo-speech-recognition (native module → new build). Candidate for a later build-cycle. Quick-tap (<500ms) cancels.
 - Voice overlay (orb) untouched — it already is the "agent speaks" mode; speaker icon toggles TTS for chat mode. Matches user's "click mic → speaks, else chat".
 
+### Shipped end of day 1
+- Commit `ef96c3f` on `claude-auto`. Migration `20260703_001` pushed to prod; `plan-chat` redeployed (401-gate smoke-tested). tsc clean.
+- Supabase gotcha: CLI migration "version" = leading digits only → same-day `_001`/`_002` files share a version and confuse history. Repaired with `migration repair --status applied 20260615 20260617`, then stashed the `_002` files during `db push` so only `20260703_001` applied. Remember for the next same-day second migration.
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
