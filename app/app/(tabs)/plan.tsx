@@ -28,7 +28,6 @@ import { extractPlanDate } from '../../src/lib/parseDate'
 import { addLocalDays } from '../../src/lib/time-range'
 import { emitTimerChange } from '../../src/lib/timer-events'
 import { SPEECH_RECORDING } from '../../src/lib/speechRecording'
-import { VoiceChatOverlay } from '../../src/components/VoiceChatOverlay'
 import { TodoBacklog } from '../../src/components/TodoBacklog'
 import * as categoriesService from '../../src/services/categories'
 import type { Category } from '../../src/types/database'
@@ -70,7 +69,6 @@ export default function PlanScreen() {
   const [plan, setPlan] = useState<ProposedPlan | null>(null)
   const [model, setModel] = useState('gpt-4o-mini')
   const [ttsOn, setTtsOn] = useState(true)
-  const [voiceOpen, setVoiceOpen] = useState(false)
   const [tab, setTab] = useState<'chat' | 'tasks'>('chat')
   const [categories, setCategories] = useState<Category[]>([])
 
@@ -157,12 +155,6 @@ export default function PlanScreen() {
     },
     [sending, ttsOn, runTurn],
   )
-
-  // Hands-free voice path: run the turn, return the reply for the overlay to speak.
-  const voiceTurn = useCallback(async (text: string): Promise<string> => {
-    const turn = await runTurn(text)
-    return turn?.reply ?? ''
-  }, [runTurn])
 
   // Hold-to-talk: press and hold the mic to record, release to transcribe and
   // send. A quick tap (<500ms) is treated as accidental and discarded.
@@ -272,59 +264,45 @@ export default function PlanScreen() {
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Header */}
+      {/* Header: Plan / Tasks toggle + TTS switch */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.title, { color: colors.text1 }]}>Plan</Text>
-          <Text style={[styles.sub, { color: colors.text3 }]}>{headerSub}</Text>
+        <View style={styles.tabRow}>
+          {(['chat', 'tasks'] as const).map((t) => (
+            <Pressable key={t} onPress={() => setTab(t)} style={styles.tabBtn}>
+              <Text style={[styles.tabTxt, { color: tab === t ? colors.text1 : colors.text4 }]}>
+                {t === 'chat' ? 'Plan' : 'Tasks'}
+              </Text>
+              {tab === t && <View style={[styles.tabUnderline, { backgroundColor: ACCENT }]} />}
+            </Pressable>
+          ))}
         </View>
         <Pressable onPress={() => setTtsOn((v) => !v)} hitSlop={10} style={styles.iconBtn}>
           <SpeakerIcon color={ttsOn ? colors.text1 : colors.text4} on={ttsOn} />
         </Pressable>
-        <Pressable
-          onPress={() => {
-            tts.stop()
-            setVoiceOpen(true)
-          }}
-          hitSlop={10}
-          style={[styles.voiceChatBtn, { backgroundColor: colors.surface3, borderColor: colors.border2 }]}
-        >
-          <WaveIcon color={colors.text1} />
-        </Pressable>
       </View>
 
-      {/* Chat / Tasks toggle */}
-      <View style={[styles.tabRow, { borderBottomColor: colors.border }]}>
-        {(['chat', 'tasks'] as const).map((t) => (
-          <Pressable key={t} onPress={() => setTab(t)} style={styles.tabBtn}>
-            <Text style={[styles.tabTxt, { color: tab === t ? colors.text1 : colors.text4 }]}>
-              {t === 'chat' ? 'Plan' : 'Tasks'}
-            </Text>
-            {tab === t && <View style={[styles.tabUnderline, { backgroundColor: ACCENT }]} />}
-          </Pressable>
-        ))}
-      </View>
-
-      {/* Date selector */}
+      {tab === 'tasks' ? (
+      <>
+      {/* Date selector: Tasks needs the target date up front — "+ plan" schedules into it */}
       <View style={[styles.dateBar, { borderBottomColor: colors.border }]}>
         <Pressable onPress={() => shiftDate(-1)} hitSlop={10} style={styles.dateArrow}>
           <Text style={[styles.arrow, { color: colors.text2 }]}>‹</Text>
         </Pressable>
-        <Text style={[styles.dateLabel, { color: colors.text1 }]}>Planning · {fmtDate(date)}</Text>
+        <Text style={[styles.dateLabel, { color: colors.text1 }]}>{fmtDate(date)}</Text>
         <Pressable onPress={() => shiftDate(1)} hitSlop={10} style={styles.dateArrow}>
           <Text style={[styles.arrow, { color: colors.text2 }]}>›</Text>
         </Pressable>
       </View>
-
-      {tab === 'tasks' ? (
-        <TodoBacklog
-          colors={colors}
-          categories={categories}
-          planDate={date}
-          onPlanChanged={emitTimerChange}
-        />
+      <TodoBacklog
+        colors={colors}
+        categories={categories}
+        planDate={date}
+        onPlanChanged={emitTimerChange}
+      />
+      </>
       ) : (
       <>
+      <Text style={[styles.sub, { color: colors.text3, paddingHorizontal: 20, paddingTop: 10 }]}>{headerSub}</Text>
       {/* Chat */}
       <ScrollView
         ref={scrollRef}
@@ -411,6 +389,17 @@ export default function PlanScreen() {
         )}
       </ScrollView>
 
+      {/* Date selector: below the chat, just the date */}
+      <View style={[styles.dateBar, { borderBottomWidth: 0, borderTopWidth: 1, borderTopColor: colors.border }]}>
+        <Pressable onPress={() => shiftDate(-1)} hitSlop={10} style={styles.dateArrow}>
+          <Text style={[styles.arrow, { color: colors.text2 }]}>‹</Text>
+        </Pressable>
+        <Text style={[styles.dateLabel, { color: colors.text1 }]}>{fmtDate(date)}</Text>
+        <Pressable onPress={() => shiftDate(1)} hitSlop={10} style={styles.dateArrow}>
+          <Text style={[styles.arrow, { color: colors.text2 }]}>›</Text>
+        </Pressable>
+      </View>
+
       {/* Input bar */}
       <View style={[styles.inputBar, { borderTopColor: colors.border, backgroundColor: colors.bg }]}>
         <TextInput
@@ -455,14 +444,6 @@ export default function PlanScreen() {
       </View>
       </>
       )}
-
-      <VoiceChatOverlay
-        visible={voiceOpen}
-        colors={colors}
-        onClose={() => setVoiceOpen(false)}
-        transcribe={transcribe}
-        onTurn={voiceTurn}
-      />
     </KeyboardAvoidingView>
   )
 }
@@ -480,19 +461,6 @@ function SendIcon({ color }: { color: string }) {
   return (
     <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
       <Path d="M4 12l16-8-6 16-3-6-7-2z" stroke={color} strokeWidth={1.8} strokeLinejoin="round" />
-    </Svg>
-  )
-}
-
-function WaveIcon({ color }: { color: string }) {
-  return (
-    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M3 12h2M7 8v8M11 4v16M15 7v10M19 10v4M21 12h0"
-        stroke={color}
-        strokeWidth={1.9}
-        strokeLinecap="round"
-      />
     </Svg>
   )
 }
@@ -519,20 +487,10 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 26, fontWeight: '700', fontFamily: fonts.displayBold, letterSpacing: -0.5 },
   sub: { fontSize: 13, fontFamily: fonts.ui, marginTop: 2 },
   iconBtn: { padding: 6 },
-  voiceChatBtn: {
-    marginLeft: 6,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabRow: { flexDirection: 'row', borderBottomWidth: 1 },
-  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 12 },
+  tabRow: { flex: 1, flexDirection: 'row' },
+  tabBtn: { alignItems: 'center', paddingVertical: 4, paddingHorizontal: 16 },
   tabTxt: { fontSize: 14, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: 0.2 },
   tabUnderline: { position: 'absolute', bottom: -1, height: 2, width: 40, borderRadius: 1 },
   dateBar: {
