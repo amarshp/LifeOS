@@ -24,6 +24,7 @@ import * as Haptics from 'expo-haptics'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
 import { todayStr } from '../../src/lib/date'
+import { extractPlanDate } from '../../src/lib/parseDate'
 import { addLocalDays } from '../../src/lib/time-range'
 import { emitTimerChange } from '../../src/lib/timer-events'
 import { SPEECH_RECORDING } from '../../src/lib/speechRecording'
@@ -60,7 +61,7 @@ export default function PlanScreen() {
   const { colors, expectedSleepHours } = useSettings()
   const router = useRouter()
 
-  const [date, setDate] = useState<string>(() => addLocalDays(todayStr(), 1))
+  const [date, setDate] = useState<string>(todayStr)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -102,17 +103,30 @@ export default function PlanScreen() {
   // Returns the turn (or null on error). Does NOT speak — callers decide.
   // `forDate` overrides the target date for this turn (quick prompts that
   // switch to today can't rely on setDate — the closure would be stale).
+  //
+  // Opening a fresh chat with a message that names a day ("tomorrow I want
+  // to…", "let's plan Friday") sets the planning date from that instead of
+  // requiring the date stepper — mid-conversation mentions are left alone so
+  // a stray date reference can't silently wipe an in-progress plan.
   const runTurn = useCallback(
     async (text: string, forDate?: string): Promise<ChatTurn | null> => {
       const trimmed = text.trim()
       if (!trimmed) return null
+      let effectiveDate = forDate ?? date
+      if (!forDate && messagesRef.current.length === 0) {
+        const detected = extractPlanDate(trimmed)
+        if (detected && detected !== date) {
+          effectiveDate = detected
+          setDate(detected)
+        }
+      }
       if (!firstPromptRef.current) firstPromptRef.current = trimmed
       const next: ChatMessage[] = [...messagesRef.current, { role: 'user', content: trimmed }]
       setMessages(next)
       setSending(true)
       scrollToEnd()
       try {
-        const turn = await sendMessage(forDate ?? date, next, expectedSleepHours)
+        const turn = await sendMessage(effectiveDate, next, expectedSleepHours)
         setMessages((m) => [...m, { role: 'assistant', content: turn.reply }])
         setPlan(turn.plan)
         setModel(turn.model)
@@ -324,8 +338,9 @@ export default function PlanScreen() {
             <Text style={[styles.emptyTitle, { color: colors.text2 }]}>Plan your day, out loud or by text</Text>
             <Text style={[styles.emptyBody, { color: colors.text3 }]}>
               “Tomorrow I want to gym at 7, deep work from 9 to 12, lunch with mom, then admin in the
-              afternoon.” I’ll ask questions, suggest a schedule, and add it to your day. Hold the mic
-              to talk; release to send.
+              afternoon.” I’ll ask questions, suggest a schedule, and add it to your day. Mention a day
+              and I’ll plan that one — no need to touch the date arrows. Hold the mic to talk; release
+              to send.
             </Text>
             <View style={styles.quickRow}>
               {([
