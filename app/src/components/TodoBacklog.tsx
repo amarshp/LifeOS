@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { fonts } from '../theme/tokens'
 import type { ColorPalette } from '../theme/tokens'
@@ -51,6 +51,7 @@ export function TodoBacklog({ colors: tc, categories, planDate, onPlanChanged }:
   const [plannedIds, setPlannedIds] = useState<Set<string>>(new Set())
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<Todo | null>(null)
+  const [quickTitle, setQuickTitle] = useState('')
 
   const load = useCallback(() => {
     todosService.getOpenTodos().then(async (ts) => {
@@ -81,22 +82,49 @@ export function TodoBacklog({ colors: tc, categories, planDate, onPlanChanged }:
     }
   }, [planDate, onPlanChanged])
 
-  const openNew = () => { setEditing(null); setEditorOpen(true) }
+  // Quick add: a task is just a title — details (priority, repeat, category…)
+  // live in the editor, opened by tapping the task.
+  const quickAdd = useCallback(async () => {
+    const title = quickTitle.trim()
+    if (!title) return
+    setQuickTitle('')
+    try {
+      await todosService.createTodo({ title })
+      load()
+    } catch (e) {
+      Alert.alert('Task', e instanceof Error ? e.message : 'Could not add task')
+    }
+  }, [quickTitle, load])
+
   const openEdit = (t: Todo) => { setEditing(t); setEditorOpen(true) }
 
   const groups = groupTodos(todos)
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Pressable onPress={openNew} style={[styles.newBtn, { borderColor: tc.border2 }]}>
-          <Text style={[styles.newTxt, { color: tc.text2 }]}>+  New task</Text>
-        </Pressable>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={[styles.quickRow, { borderColor: tc.border2, backgroundColor: tc.surface1 }]}>
+          <TextInput
+            value={quickTitle}
+            onChangeText={setQuickTitle}
+            placeholder="Add a task…"
+            placeholderTextColor={tc.text4}
+            style={[styles.quickInput, { color: tc.text1 }]}
+            onSubmitEditing={quickAdd}
+            returnKeyType="done"
+            blurOnSubmit={false}
+          />
+          {quickTitle.trim().length > 0 && (
+            <Pressable onPress={quickAdd} hitSlop={8} style={styles.quickBtn}>
+              <Text style={{ color: tc.text1, fontSize: 22, lineHeight: 24 }}>＋</Text>
+            </Pressable>
+          )}
+        </View>
 
         {todos.length === 0 && (
           <View style={styles.empty}>
             <Text style={[styles.emptyTitle, { color: tc.text2 }]}>No tasks yet</Text>
-            <Text style={[styles.emptyBody, { color: tc.text3 }]}>Add what you want to get done. On a given day, pull tasks into that day&apos;s plan by priority.</Text>
+            <Text style={[styles.emptyBody, { color: tc.text3 }]}>Just type what you want to get done — details are optional. Tap a task to edit; the planner pulls tasks into your day by priority.</Text>
           </View>
         )}
 
@@ -118,11 +146,13 @@ export function TodoBacklog({ colors: tc, categories, planDate, onPlanChanged }:
                       <Text style={[styles.title, { color: tc.text1 }]} numberOfLines={1}>{t.title}</Text>
                       {t.recurrence !== 'none' && <Text style={[styles.recur, { color: tc.text4 }]}>↻</Text>}
                     </View>
-                    <Text style={[styles.meta, { color: tc.text3 }]} numberOfLines={1}>
-                      {cat?.name ?? 'No category'}
-                      {due ? ` · ${dueLabel(due)}` : ''}
-                      {steps.length > 0 ? ` · ${doneSteps}/${steps.length} steps` : ''}
-                    </Text>
+                    {(cat || due || steps.length > 0) && (
+                      <Text style={[styles.meta, { color: tc.text3 }]} numberOfLines={1}>
+                        {[cat?.name, due ? dueLabel(due) : null, steps.length > 0 ? `${doneSteps}/${steps.length} steps` : null]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                    )}
                   </View>
                   {planned ? (
                     <Text style={[styles.planned, { color: cat?.color ?? tc.text3 }]}>✓ planned</Text>
@@ -152,8 +182,9 @@ export function TodoBacklog({ colors: tc, categories, planDate, onPlanChanged }:
 
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 40, gap: 8 },
-  newBtn: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 8 },
-  newTxt: { fontSize: 14, fontFamily: fonts.ui, fontWeight: '600' },
+  quickRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, marginBottom: 8 },
+  quickInput: { flex: 1, fontSize: 15, fontFamily: fonts.ui, paddingVertical: 12 },
+  quickBtn: { paddingLeft: 10, paddingVertical: 8 },
   empty: { paddingVertical: 40, paddingHorizontal: 8, gap: 10 },
   emptyTitle: { fontSize: 17, fontFamily: fonts.displaySemiBold, fontWeight: '600', textAlign: 'center' },
   emptyBody: { fontSize: 14, fontFamily: fonts.ui, lineHeight: 21, textAlign: 'center' },

@@ -157,16 +157,47 @@ export async function reopenTodo(id: string): Promise<void> {
   await updateTodo(id, { status: 'open', completed_at: null })
 }
 
+/**
+ * Complete a todo by id, if it is still open. Used by the auto-complete hook
+ * (stopping a time entry linked to a task) — silently no-ops when the todo is
+ * already done or gone, so every stop path can call it unconditionally.
+ */
+export async function completeTodoById(id: string): Promise<void> {
+  const { data } = await supabase
+    .from('todos')
+    .select('*')
+    .eq('id', id)
+    .eq('status', 'open')
+    .is('deleted_at', null)
+    .maybeSingle<Todo>()
+  if (!data) return
+  await completeTodo(data)
+}
+
+// Tasks are category-optional (quick add is just a title). Scheduling surfaces
+// (blocks, entries) require a category, so category-less tasks fall back to the
+// user's first category.
+export async function fallbackCategoryId(): Promise<string | null> {
+  const { data } = await supabase
+    .from('categories')
+    .select('id')
+    .is('deleted_at', null)
+    .order('sort_order')
+    .limit(1)
+  return data?.[0]?.id ?? null
+}
+
 // ─── Plan bridge ─────────────────────────────────────────────
 // Pull a todo into a day's plan: create a calendar_block (carrying todo_id) at a
 // default 1-hour slot the user then adjusts in the Day view. The todo stays in
 // the backlog until done — being planned is tracked via the block's todo_id.
 export async function addTodoToPlan(todo: Todo, date: string): Promise<void> {
-  if (!todo.category_id) throw new Error('Add a category to this task first, then plan it.')
+  const categoryId = todo.category_id ?? (await fallbackCategoryId())
+  if (!categoryId) throw new Error('Create a category first (Settings), then plan tasks.')
   const startHour = date === todayStr() ? Math.min(Math.max(new Date().getHours() + 1, 6), 22) : 9
   const { start, end } = resolveLocalRange(date, startHour, 0, startHour + 1, 0)
   await calendarBlocksService.createBlock({
-    category_id: todo.category_id,
+    category_id: categoryId,
     title: todo.title,
     date,
     start_time: start.toISOString(),

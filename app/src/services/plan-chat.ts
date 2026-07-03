@@ -1,11 +1,15 @@
 import { File } from 'expo-file-system'
 import { supabase } from '../lib/supabase'
 import { resolveLocalRange } from '../lib/time-range'
+import { todayStr } from '../lib/date'
 import * as calendarBlocksService from './calendar-blocks'
+import { fallbackCategoryId } from './todos'
 import {
   getPlansForDate,
   getPlanItems,
   deletePlan,
+  updatePlan,
+  deletePlanItem,
   createPlan,
   addPlanItem,
   materializePlan,
@@ -119,6 +123,10 @@ function hhmm(value: string): { h: number; m: number } {
  * that day (and the calendar blocks it materialized) is removed first, so the
  * Day view shows exactly one clean plan after every Apply. Returns the number of
  * calendar blocks created.
+ *
+ * Replan-from-now: when `date` is TODAY, only prior AI items that start at/after
+ * now are torn down — the morning that already happened stays on the timeline.
+ * (For future dates nothing has happened yet, so everything is replaced.)
  */
 export async function applyChatPlan(
   date: string,
@@ -127,15 +135,23 @@ export async function applyChatPlan(
   prompt: string,
 ): Promise<number> {
   // 1. Tear down prior AI plans for this date + their materialized blocks.
+  const cutoffIso = date === todayStr() ? new Date().toISOString() : null
   const existing = (await getPlansForDate(date)).filter((p) => p.source === 'ai')
   for (const old of existing) {
     const items = await getPlanItems(old.id)
+    let kept = 0
     for (const it of items) {
+      if (cutoffIso && it.start_time < cutoffIso) {
+        kept++
+        continue
+      }
       if (it.calendar_block_id) {
         await calendarBlocksService.deleteBlock(it.calendar_block_id)
       }
+      await deletePlanItem(it.id)
     }
-    await deletePlan(old.id)
+    if (kept === 0) await deletePlan(old.id)
+    else await updatePlan(old.id, { status: 'archived' })
   }
 
   // 2. Create the fresh plan.
@@ -168,6 +184,8 @@ export async function applyChatPlan(
     })
   }
 
-  // 4. Materialize into calendar_blocks (what Day/Week/Home render).
-  return materializePlan(created.id, date)
+  // 4. Materialize into calendar_blocks (what Day/Week/Home render). Items the
+  // model couldn't categorize land in the fallback category instead of being
+  // silently dropped.
+  return materializePlan(created.id, date, await fallbackCategoryId())
 }

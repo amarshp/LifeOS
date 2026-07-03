@@ -169,17 +169,6 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
               ))}
             </View>
 
-            <Text style={[styles.label, { color: tc.text3 }]}>CATEGORY</Text>
-            <View style={styles.row}>
-              {categories.map((c) => (
-                <Pressable key={c.id} onPress={() => setCategoryId(categoryId === c.id ? null : c.id)}
-                  style={[styles.chip, { borderColor: categoryId === c.id ? tc.border3 : tc.border, backgroundColor: categoryId === c.id ? tc.surface3 : 'transparent' }]}>
-                  <View style={[styles.pdot, { backgroundColor: c.color }]} />
-                  <Text style={[styles.chipTxt, { color: categoryId === c.id ? tc.text1 : tc.text3 }]} numberOfLines={1}>{c.name}</Text>
-                </Pressable>
-              ))}
-            </View>
-
             <Text style={[styles.label, { color: tc.text3 }]}>REPEAT</Text>
             <View style={styles.row}>
               {RECURRENCES.map((r) => (
@@ -224,6 +213,18 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
             <Text style={[styles.label, { color: tc.text3 }]}>NOTES</Text>
             <TextInput value={notes} onChangeText={setNotes} placeholder="Optional notes…" placeholderTextColor={tc.text4}
               multiline style={[styles.notes, { color: tc.text1, borderColor: tc.border, backgroundColor: tc.surface1 }]} />
+
+            {/* Optional — tasks don't need a category; one is auto-assigned when scheduled. */}
+            <Text style={[styles.label, { color: tc.text3 }]}>CATEGORY (OPTIONAL)</Text>
+            <View style={styles.row}>
+              {categories.map((c) => (
+                <Pressable key={c.id} onPress={() => setCategoryId(categoryId === c.id ? null : c.id)}
+                  style={[styles.chip, { borderColor: categoryId === c.id ? tc.border3 : tc.border, backgroundColor: categoryId === c.id ? tc.surface3 : 'transparent' }]}>
+                  <View style={[styles.pdot, { backgroundColor: c.color }]} />
+                  <Text style={[styles.chipTxt, { color: categoryId === c.id ? tc.text1 : tc.text3 }]} numberOfLines={1}>{c.name}</Text>
+                </Pressable>
+              ))}
+            </View>
 
             <View style={styles.footer}>
               {todo && (

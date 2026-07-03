@@ -1,6 +1,20 @@
 import { supabase } from '../lib/supabase'
 import type { TimeEntry, TimeEntryInsert, TimeEntryUpdate } from '../types/database'
 import { paddedDateRange, filterByLocalDay, shiftDate } from '../lib/day-range'
+import { completeTodoById } from './todos'
+
+// Auto-complete rule: a time entry linked to a task (todo_id) that gets STOPPED
+// or logged as completed marks that task done. Lives here so every stop path
+// (banner, sheet, Live Activity deep link, handoff) inherits it. Best-effort —
+// a failed todo update must never fail the stop itself.
+async function completeLinkedTodo(todoId: string | null | undefined): Promise<void> {
+  if (!todoId) return
+  try {
+    await completeTodoById(todoId)
+  } catch {
+    /* stop succeeded; todo completion is best-effort */
+  }
+}
 
 export async function getRunningTimers(): Promise<TimeEntry[]> {
   const { data, error } = await supabase
@@ -70,6 +84,8 @@ export async function startTimerStopPrevious(params: {
   tags?: string[]
   startTime?: string
   notes?: string | null
+  todoId?: string | null
+  calendarBlockId?: string | null
 }): Promise<string> {
   if (params.startTime) {
     // Chain: end the running timer(s) EXACTLY at the new start time (the handoff)
@@ -86,6 +102,7 @@ export async function startTimerStopPrevious(params: {
         .update({ is_running: false, end_time: endIso } as unknown as Record<string, unknown>)
         .eq('id', r.id)
       if (stopErr) throw stopErr
+      await completeLinkedTodo(r.todo_id)
     }
     const entry = await startTimer({
       category_id: params.categoryId,
@@ -93,9 +110,14 @@ export async function startTimerStopPrevious(params: {
       start_time: params.startTime,
       tags: params.tags ?? [],
       notes: params.notes ?? null,
+      todo_id: params.todoId ?? null,
+      calendar_block_id: params.calendarBlockId ?? null,
     })
     return entry.id
   }
+
+  // RPC path stops previous timers server-side; complete their linked todos here.
+  const stopped = await getRunningTimers()
 
   const { data, error } = await supabase.rpc('start_timer_stop_previous', {
     p_category_id: params.categoryId,
@@ -105,8 +127,13 @@ export async function startTimerStopPrevious(params: {
 
   if (error) throw error
   const entryId = data as string
-  if (params.notes) {
-    await updateEntry(entryId, { notes: params.notes })
+  for (const r of stopped) await completeLinkedTodo(r.todo_id)
+  if (params.notes || params.todoId || params.calendarBlockId) {
+    await updateEntry(entryId, {
+      ...(params.notes ? { notes: params.notes } : {}),
+      ...(params.todoId ? { todo_id: params.todoId } : {}),
+      ...(params.calendarBlockId ? { calendar_block_id: params.calendarBlockId } : {}),
+    })
   }
   return entryId
 }
@@ -135,10 +162,12 @@ export async function stopTimer(entryId: string): Promise<TimeEntry> {
     .single<TimeEntry>()
 
   if (error) throw error
+  await completeLinkedTodo(data.todo_id)
   return data
 }
 
 export async function stopAllTimers(): Promise<void> {
+  const running = await getRunningTimers()
   const now = new Date().toISOString()
   const { error } = await supabase
     .from('time_entries')
@@ -147,6 +176,7 @@ export async function stopAllTimers(): Promise<void> {
     .is('deleted_at', null)
 
   if (error) throw error
+  for (const r of running) await completeLinkedTodo(r.todo_id)
 }
 
 export async function updateEntry(id: string, updates: TimeEntryUpdate): Promise<TimeEntry> {
@@ -229,6 +259,7 @@ export async function addCompletedEntry(entry: {
   end_time: string
   tags?: string[]
   notes?: string | null
+  todo_id?: string | null
 }): Promise<TimeEntry> {
   const { data, error } = await supabase
     .from('time_entries')
@@ -240,11 +271,13 @@ export async function addCompletedEntry(entry: {
       is_running: false,
       tags: entry.tags ?? [],
       notes: entry.notes ?? null,
+      todo_id: entry.todo_id ?? null,
     } as unknown as Record<string, unknown>)
     .select()
     .single<TimeEntry>()
 
   if (error) throw error
+  await completeLinkedTodo(data.todo_id)
   return data
 }
 

@@ -125,17 +125,22 @@ export async function deletePlanItem(id: string): Promise<void> {
 
 /**
  * Materialize a plan's items into live `calendar_blocks` (the "plan" view that
- * Day/Week/Home already render). Items missing a category are skipped — the
- * caller is expected to map AI proposals to categories first. Returns the count
- * of blocks created. Idempotency / re-materialization is left to a later phase.
+ * Day/Week/Home already render). Items missing a category use
+ * `fallbackCategoryId` when given, else are skipped. Returns the count of
+ * blocks created. Idempotency / re-materialization is left to a later phase.
  */
-export async function materializePlan(planId: string, date: string): Promise<number> {
+export async function materializePlan(
+  planId: string,
+  date: string,
+  fallbackCategoryId?: string | null,
+): Promise<number> {
   const items = await getPlanItems(planId)
   let created = 0
   for (const item of items) {
-    if (!item.category_id || item.calendar_block_id) continue
+    const categoryId = item.category_id ?? fallbackCategoryId ?? null
+    if (!categoryId || item.calendar_block_id) continue
     const block = await calendarBlocksService.createBlock({
-      category_id: item.category_id,
+      category_id: categoryId,
       title: item.title,
       date,
       start_time: item.start_time,

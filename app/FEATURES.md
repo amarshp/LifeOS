@@ -98,6 +98,8 @@
 
 ## Todos / Backlog (Plan tab → Tasks)
 - A backlog of intentions (timeless until planned), separate from time-boxed blocks. Each todo: title, optional category, priority (none/low/med/high), deadline, notes, and a one-level ordered checklist of steps ("phases").
+- **Quick add**: a task is just a title — type into the "Add a task…" field and hit return. All details (priority, repeat, deadline, steps, category) are optional, edited by tapping the task; category is demoted to an optional field (a fallback category is auto-assigned when a category-less task gets scheduled).
+- **Tasks attach to entries & blocks**: the add sheet (Start timer / Log past / Plan block) has an optional "Task" chip row — picking one links `todo_id`, prefills title/category. Stopping a linked timer, logging a linked past entry, or the handoff-stop of a linked timer **auto-completes the task** (recurring tasks roll forward). Home's "next planned" tap carries the block's task onto the timer.
 - Recurrence (Once/Daily/Weekdays/M W F/Weekly): a recurring todo rolls forward — completing it records the occurrence and advances `next_due` (it never leaves the list); one-off todos complete and drop out. Completions are unique per occurrence (no streak inflation).
 - Plan tab has a **Plan / Tasks** toggle. Tasks shows the backlog grouped Overdue / Today / Upcoming / No date, with priority dot, deadline, step progress, and a ↻ marker for recurring.
 - **Add to plan**: "+ plan" on a todo creates a todo-linked `calendar_block` on the Plan tab's selected date (default 1-hour slot, adjust in Day) → it appears in Day/Week. Needs the todo to have a category.
@@ -120,7 +122,11 @@
 
 ## Plan (AI day-planner chat)
 - `Plan` tab: a conversational assistant that plans a single day. Pick the date (defaults to tomorrow), describe your day in plain language, and it asks clarifying questions, suggests a schedule, and proposes a concrete plan
-- Voice mode (two ways): (a) tap the mic in the input bar for push-to-talk; (b) tap the waveform button for **hands-free voice chat** — a ChatGPT-style full-screen loop (listen → transcribe → reply → speak → listen) with silence detection (mic metering VAD + hard-cap fallback). Tap the orb to interrupt/barge in, End to leave. Speech is transcribed via Whisper (`plan-transcribe`); replies are spoken on-device (`expo-speech`)
+- Voice mode (two ways): (a) **hold** the mic in the input bar to talk — release to transcribe & send (quick taps are discarded); (b) tap the waveform button for **hands-free voice chat** — a ChatGPT-style full-screen loop (listen → transcribe → reply → speak → listen) with silence detection (mic metering VAD + hard-cap fallback). Tap the orb to interrupt/barge in, End to leave. Speech is transcribed via Whisper (`plan-transcribe`); replies are spoken via `plan-tts` (expo-speech fallback)
+- Quick prompts on an empty chat: "Plan my day" / "Replan from now" / "What's left today?" — the today-scoped ones flip the target date to today automatically
+- **Replan from now**: asking to redo the rest of the day proposes a plan from the current time forward; Apply replaces only prior AI blocks starting at/after now, so the morning that already happened stays on the timeline
+- **Agent manages tasks too**: it can list/add/complete backlog tasks mid-conversation ("remind me to renew my license" → task added; "I did the groceries 4–5" → time logged + task completed), links plan items and timers to tasks via `todo_id`, and the plan proposal card marks task-linked items with ☑
+- Apply materializes uncategorized items into the fallback (first) category instead of dropping them
 - Structured turns: each reply is `{ reply, plan }` — `plan` stays empty until there's a concrete schedule, then refines as you adjust. Items map to your real categories (model is given category ids; hallucinated ids are dropped server-side)
 - Apply: one tap materializes the plan into `calendar_blocks` for that date (shows in Day/Week/Home). Replace semantics — re-applying wipes the prior AI plan for the day so there are never duplicates. Items with no matching category are reported, not silently dropped
 - Backed by `daily_plans` + `daily_plan_items` (provenance: source=ai, prompt, model, generated_at). OpenAI key stays server-side in the `plan-chat` edge function (gpt-4o-mini, JWT-verified)

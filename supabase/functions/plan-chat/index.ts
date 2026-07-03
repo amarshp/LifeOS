@@ -3,9 +3,9 @@
 // AUTHENTICATED app (verify_jwt ON — default). We resolve the user from their
 // JWT, load their categories + planned blocks + open todos as context, then run
 // an OpenAI tool-calling loop: the model can inspect and modify the user's REAL
-// data (time entries + calendar blocks — always through the user-scoped client,
-// so RLS applies) before returning a structured turn: a chat `reply`, an
-// optional `plan`, and a list of `actions` it performed.
+// data (time entries + calendar blocks + backlog todos — always through the
+// user-scoped client, so RLS applies) before returning a structured turn: a
+// chat `reply`, an optional `plan`, and a list of `actions` it performed.
 //
 // Deploy: npx supabase functions deploy plan-chat
 // Secret:  npx supabase secrets set OPENAI_API_KEY=sk-...
@@ -81,6 +81,47 @@ function isoToLocal(iso: string, timeZone: string): string {
 /** Local date "YYYY-MM-DD" for the current instant in `timeZone`. */
 function todayLocal(timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, dateStyle: 'short' }).format(new Date())
+}
+
+// ─── Todo recurrence (mirrors src/services/todos.ts semantics) ───────────────
+
+/** Weekday of a "YYYY-MM-DD" date, 0=Mon … 6=Sun (app convention). */
+function weekdayOf(dateStr: string): number {
+  return (new Date(dateStr + 'T00:00:00Z').getUTCDay() + 6) % 7
+}
+
+function addDaysStr(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function todoOccursOn(recurrence: string, days: number[] | null, anchor: string, target: string): boolean {
+  const wd = weekdayOf(target)
+  switch (recurrence) {
+    case 'daily':
+      return true
+    case 'weekdays':
+      return wd <= 4
+    case 'mwf':
+      return wd === 0 || wd === 2 || wd === 4
+    case 'weekly':
+      return wd === weekdayOf(anchor)
+    case 'custom':
+      return Array.isArray(days) && days.includes(wd)
+    default:
+      return false
+  }
+}
+
+/** First date strictly AFTER `after` matching the recurrence (or null). */
+function todoNextDueAfter(recurrence: string, days: number[] | null, after: string): string | null {
+  if (recurrence === 'none') return null
+  for (let i = 1; i <= 14; i++) {
+    const d = addDaysStr(after, i)
+    if (todoOccursOn(recurrence, days, after, d)) return d
+  }
+  return null
 }
 
 // ─── Structured output contract ───────────────────────────────────────────────
@@ -176,6 +217,7 @@ const TOOLS = [
           title: { type: 'string' },
           start_date: { type: 'string' },
           start_time: { type: 'string' },
+          todo_id: { type: 'string', description: 'If this activity works on a backlog task, its todo id (stopping the timer then completes the task).' },
         },
         required: ['category_id', 'title'],
       },
@@ -196,6 +238,7 @@ const TOOLS = [
           start_time: { type: 'string' },
           end_date: { type: 'string' },
           end_time: { type: 'string' },
+          todo_id: { type: 'string', description: 'If this logged period was a backlog task being done, its todo id — the task is marked done.' },
         },
         required: ['category_id', 'title', 'start_time', 'end_time'],
       },
@@ -259,6 +302,7 @@ const TOOLS = [
           start_time: { type: 'string' },
           end_time: { type: 'string' },
           category_id: { type: 'string' },
+          todo_id: { type: 'string', description: 'If the block schedules a backlog task, its todo id.' },
         },
         required: ['date', 'title', 'start_time', 'end_time'],
       },
@@ -295,6 +339,47 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'list_todos',
+      description: "List the user's open backlog tasks with their ids (fresh state, including tasks added this conversation).",
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_todo',
+      description:
+        'Add a task to the backlog (a timeless to-do, NOT a scheduled block). Use when the user mentions something they need to do ("remind me to…", "I have to… sometime"). Only title is required.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          priority: { type: 'number', description: '0 none · 1 low · 2 medium · 3 high. Default 0.' },
+          deadline: { type: 'string', description: 'Local date YYYY-MM-DD, only if the user gave one.' },
+          recurrence: { type: 'string', enum: ['none', 'daily', 'weekdays', 'mwf', 'weekly'], description: 'Default none.' },
+          category_id: { type: 'string', description: 'A real category id, only if one clearly fits.' },
+          notes: { type: 'string' },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'complete_todo',
+      description:
+        'Mark a backlog task done (the user says they did it). Recurring tasks roll forward to their next occurrence automatically.',
+      parameters: {
+        type: 'object',
+        properties: { todo_id: { type: 'string' } },
+        required: ['todo_id'],
+      },
+    },
+  },
 ]
 
 interface ToolCtx {
@@ -303,7 +388,48 @@ interface ToolCtx {
   targetDate: string
   userId: string
   allowedCategoryIds: Set<string>
+  allowedTodoIds: Set<string> // grows when the agent adds a task mid-conversation
   actions: string[]
+}
+
+/**
+ * Mark a todo done, honoring the recurring-done invariant (recurring todos are
+ * never status='done' — they get a completion row + advanced next_due).
+ */
+async function completeTodoRecord(ctx: ToolCtx, todoId: string): Promise<Record<string, unknown>> {
+  const { supabase } = ctx
+  const today = todayLocal(ctx.tz)
+  const { data: todo, error } = await supabase
+    .from('todos')
+    .select('id, title, recurrence, recurrence_days, status')
+    .eq('id', todoId)
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (error) return { error: error.message }
+  if (!todo) return { error: 'unknown todo_id' }
+  if (todo.status !== 'open') return { ok: true, note: 'already done' }
+  if (todo.recurrence === 'none') {
+    const { error: upErr } = await supabase
+      .from('todos')
+      .update({ status: 'done', completed_at: new Date().toISOString() })
+      .eq('id', todoId)
+    if (upErr) return { error: upErr.message }
+  } else {
+    await supabase
+      .from('todo_completions')
+      .upsert(
+        { todo_id: todoId, completed_on: today, user_id: ctx.userId },
+        { onConflict: 'todo_id,completed_on', ignoreDuplicates: true },
+      )
+    const next = todoNextDueAfter(todo.recurrence, todo.recurrence_days, today)
+    const { error: upErr } = await supabase
+      .from('todos')
+      .update({ next_due: next, updated_at: new Date().toISOString() })
+      .eq('id', todoId)
+    if (upErr) return { error: upErr.message }
+  }
+  ctx.actions.push(`Completed task "${todo.title}"`)
+  return { ok: true }
 }
 
 async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -355,10 +481,12 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .update({ is_running: false, end_time: end })
         .eq('id', id)
         .eq('is_running', true)
-        .select('id, title')
+        .select('id, title, todo_id')
         .single()
       if (error) return { error: error.message }
       ctx.actions.push(`Stopped "${data.title}" at ${isoToLocal(end, tz)}`)
+      // Entry linked to a task → the task is done (same rule as the app).
+      if (data.todo_id) await completeTodoRecord(ctx, data.todo_id as string)
       return { ok: true, stopped_at_local: isoToLocal(end, tz) }
     }
 
@@ -367,6 +495,8 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       const title = str('title')
       if (!cat || !title) return { error: 'category_id and title required' }
       if (!ctx.allowedCategoryIds.has(cat)) return { error: 'unknown category_id' }
+      const todoId = str('todo_id')
+      if (todoId && !ctx.allowedTodoIds.has(todoId)) return { error: 'unknown todo_id' }
       // Idempotency guard: a same-titled timer already running is a no-op, so a
       // confused model can't stack duplicates.
       const { data: dup } = await supabase
@@ -382,7 +512,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         : new Date().toISOString()
       const { data, error } = await supabase
         .from('time_entries')
-        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: [] })
+        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: [], todo_id: todoId ?? null })
         .select('id')
         .single()
       if (error) return { error: error.message }
@@ -397,6 +527,8 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       const et = str('end_time')
       if (!cat || !title || !st || !et) return { error: 'category_id, title, start_time, end_time required' }
       if (!ctx.allowedCategoryIds.has(cat)) return { error: 'unknown category_id' }
+      const todoId = str('todo_id')
+      if (todoId && !ctx.allowedTodoIds.has(todoId)) return { error: 'unknown todo_id' }
       const startIso = localToIso(str('start_date') ?? today, st, tz)
       let endIso = localToIso(str('end_date') ?? str('start_date') ?? today, et, tz)
       if (endIso < startIso) {
@@ -415,11 +547,13 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       if (dup && dup.length > 0) return { ok: true, entry_id: dup[0].id, note: 'already logged — no duplicate created' }
       const { data, error } = await supabase
         .from('time_entries')
-        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: [] })
+        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: [], todo_id: todoId ?? null })
         .select('id')
         .single()
       if (error) return { error: error.message }
       ctx.actions.push(`Logged "${title}" ${isoToLocal(startIso, tz)} → ${isoToLocal(endIso, tz)}`)
+      // Completed period linked to a task → the task is done.
+      if (todoId) await completeTodoRecord(ctx, todoId)
       return { ok: true, entry_id: data.id }
     }
 
@@ -489,6 +623,8 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       if (!date || !title || !st || !et) return { error: 'date, title, start_time, end_time required' }
       const cat = str('category_id')
       if (cat && !ctx.allowedCategoryIds.has(cat)) return { error: 'unknown category_id' }
+      const todoId = str('todo_id')
+      if (todoId && !ctx.allowedTodoIds.has(todoId)) return { error: 'unknown todo_id' }
       const startIso = localToIso(date, st, tz)
       let endIso = localToIso(date, et, tz)
       if (endIso <= startIso) endIso = new Date(new Date(endIso).getTime() + 86_400_000).toISOString()
@@ -503,6 +639,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
           category_id: cat ?? null,
           source: 'manual',
           tags: [],
+          todo_id: todoId ?? null,
         })
         .select('id')
         .single()
@@ -547,6 +684,72 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       if (error) return { error: error.message }
       ctx.actions.push(`Removed block "${data.title}"`)
       return { ok: true }
+    }
+
+    case 'list_todos': {
+      const { data, error } = await supabase
+        .from('todos')
+        .select('id, title, priority, deadline, next_due, recurrence, category_id')
+        .eq('status', 'open')
+        .is('deleted_at', null)
+        .order('priority', { ascending: false })
+      if (error) return { error: error.message }
+      return (data ?? []).map((t) => ({
+        todo_id: t.id,
+        title: t.title,
+        priority: t.priority,
+        due: t.recurrence !== 'none' ? t.next_due : t.deadline ? String(t.deadline).slice(0, 10) : null,
+        recurrence: t.recurrence,
+        category_id: t.category_id,
+      }))
+    }
+
+    case 'add_todo': {
+      const title = str('title')
+      if (!title) return { error: 'title required' }
+      const cat = str('category_id')
+      if (cat && !ctx.allowedCategoryIds.has(cat)) return { error: 'unknown category_id' }
+      const priorityRaw = typeof args.priority === 'number' ? Math.round(args.priority) : 0
+      const priority = Math.min(3, Math.max(0, priorityRaw))
+      const recurrence = ['none', 'daily', 'weekdays', 'mwf', 'weekly'].includes(str('recurrence') ?? '')
+        ? (str('recurrence') as string)
+        : 'none'
+      const deadlineDate = rawStr('deadline')
+      const deadline =
+        recurrence === 'none' && deadlineDate && /^\d{4}-\d{2}-\d{2}$/.test(deadlineDate)
+          ? localToIso(deadlineDate, '23:59', tz)
+          : null
+      const next_due =
+        recurrence !== 'none'
+          ? todoOccursOn(recurrence, null, today, today)
+            ? today
+            : todoNextDueAfter(recurrence, null, today)
+          : null
+      const { data, error } = await supabase
+        .from('todos')
+        .insert({
+          user_id: ctx.userId,
+          title,
+          category_id: cat ?? null,
+          priority,
+          deadline,
+          recurrence,
+          next_due,
+          notes: str('notes') ?? null,
+          status: 'open',
+        })
+        .select('id')
+        .single()
+      if (error) return { error: error.message }
+      ctx.allowedTodoIds.add(data.id as string)
+      ctx.actions.push(`Added task "${title}"`)
+      return { ok: true, todo_id: data.id }
+    }
+
+    case 'complete_todo': {
+      const id = str('todo_id')
+      if (!id) return { error: 'todo_id required' }
+      return await completeTodoRecord(ctx, id)
     }
 
     default:
@@ -627,7 +830,9 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - Tool time args: pass times as "HH:MM" exactly as the user said them. OMIT the date fields entirely when the period is today (they default to today). Never invent dates.
 - If the LAST recounted activity runs "to now" / "since then" and the user hasn't said it ended, do NOT add_completed_entry for it — instead start_timer with its backdated start_time so it is still running. One continuous entry, not a completed piece plus a new timer.
 - Quick schedule edits ("push my call to 3", "add dentist at 4") → use the calendar block tools on the right date.
+- TASKS: you manage the user's backlog too. When they mention something they need to do without a fixed time ("remind me to renew my license", "I should call the plumber sometime") → add_todo. When they say they finished a task → complete_todo (plus log the time if they said when). Linking work to tasks: pass todo_id on start_timer / add_completed_entry / add_calendar_block when the activity IS one of the backlog tasks — stopping a linked timer or logging a linked period completes the task automatically.
 - Building or reworking the WHOLE day's plan → use the "plan" field of your reply (the user taps Apply), NOT add_calendar_block calls.
+- REPLAN FROM NOW: when the target day is today and the user asks to redo/replan the rest of the day, first look at reality (list_time_entries + list_calendar_blocks), then propose a plan that starts AT OR AFTER the current time — never re-emit items for hours that already passed. Apply only replaces planned blocks from now onward; the morning that already happened stays.
 - After acting, your reply must state plainly what you changed.
 - Never invent ids: only use entry/block/category ids returned by tools or listed above.
 
@@ -635,6 +840,7 @@ THE PLAN FIELD (structured output):
 - Set "plan" to null until you have a concrete, useful schedule. Once you do, fill it AND keep refining it on later turns as the user adjusts.
 - Every item needs start_time and end_time as 24-hour "HH:MM" local clock times.
 - Set category_id to the matching category's id from the list above, or null if nothing fits. Never invent an id.
+- Set todo_id whenever an item schedules one of the backlog tasks (including tasks you just added with add_todo) — that links the block to the task so doing it completes the task.
 - Cover the meaningful parts of the day in order. Items must not overlap UNLESS the user explicitly wants things in parallel.
 - PARALLEL ITEMS: when the user says things run in parallel / at the same time / while doing X, keep BOTH items at their full stated times even though they overlap (e.g. "study 7:30–10, calls 7:30–8 and 8–8:30 in parallel" → Study 19:30–22:00 PLUS Call 1 19:30–20:00 PLUS Call 2 20:00–20:30). Never shrink, split, or shift an item to avoid an overlap the user asked for. At most 2 items may run at any moment.
 - SLEEP: the user's nightly sleep target is ${expectedSleepHours} hours. When they mention a bedtime (e.g. "I'll sleep at 11:15 PM"), add a Sleep item starting then and lasting the full ${expectedSleepHours} hours — the end_time will be an early-morning time smaller than the start_time (e.g. 23:15 → 07:45). That is the ONLY item allowed to cross midnight; never cut sleep short at midnight.
@@ -716,6 +922,7 @@ Deno.serve(async (req) => {
     targetDate: date,
     userId: userData.user.id,
     allowedCategoryIds: allowedIds,
+    allowedTodoIds, // same set instance — add_todo grows it, so the final plan filter accepts new tasks
     actions: [],
   }
 

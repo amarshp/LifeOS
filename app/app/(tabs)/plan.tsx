@@ -100,8 +100,10 @@ export default function PlanScreen() {
 
   // Core turn: append user msg → call model → append reply → update plan.
   // Returns the turn (or null on error). Does NOT speak — callers decide.
+  // `forDate` overrides the target date for this turn (quick prompts that
+  // switch to today can't rely on setDate — the closure would be stale).
   const runTurn = useCallback(
-    async (text: string): Promise<ChatTurn | null> => {
+    async (text: string, forDate?: string): Promise<ChatTurn | null> => {
       const trimmed = text.trim()
       if (!trimmed) return null
       if (!firstPromptRef.current) firstPromptRef.current = trimmed
@@ -110,7 +112,7 @@ export default function PlanScreen() {
       setSending(true)
       scrollToEnd()
       try {
-        const turn = await sendMessage(date, next, expectedSleepHours)
+        const turn = await sendMessage(forDate ?? date, next, expectedSleepHours)
         setMessages((m) => [...m, { role: 'assistant', content: turn.reply }])
         setPlan(turn.plan)
         setModel(turn.model)
@@ -132,11 +134,11 @@ export default function PlanScreen() {
 
   // Typed/push-to-talk path: run the turn and read the reply aloud if TTS is on.
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, forDate?: string) => {
       if (!text.trim() || sending) return
       tts.stop()
       setInput('')
-      const turn = await runTurn(text)
+      const turn = await runTurn(text, forDate)
       if (turn && ttsOn && turn.reply) void tts.speak(turn.reply)
     },
     [sending, ttsOn, runTurn],
@@ -148,33 +150,51 @@ export default function PlanScreen() {
     return turn?.reply ?? ''
   }, [runTurn])
 
-  const toggleRecording = useCallback(async () => {
-    if (recorderState.isRecording) {
-      try {
-        await recorder.stop()
-        setTranscribing(true)
-        const uri = recorder.uri
-        if (!uri) throw new Error('No audio captured')
-        const text = await transcribe(uri)
-        if (text) await send(text)
-      } catch (e) {
-        Alert.alert('Voice', e instanceof Error ? e.message : 'Transcription failed')
-      } finally {
-        setTranscribing(false)
-      }
-      return
-    }
-    // start
+  // Hold-to-talk: press and hold the mic to record, release to transcribe and
+  // send. A quick tap (<500ms) is treated as accidental and discarded.
+  const holdRef = useRef(false)
+  const holdStartTsRef = useRef(0)
+
+  const startHold = useCallback(async () => {
+    if (transcribing || sending) return
+    holdRef.current = true
+    holdStartTsRef.current = Date.now()
     const perm = await AudioModule.requestRecordingPermissionsAsync()
     if (!perm.granted) {
+      holdRef.current = false
       Alert.alert('Microphone', 'Enable microphone access to talk to your planner.')
       return
     }
+    if (!holdRef.current) return // released before permission resolved
     tts.stop()
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     await recorder.prepareToRecordAsync()
+    if (!holdRef.current) return
     recorder.record()
-  }, [recorder, recorderState.isRecording, send])
+  }, [recorder, transcribing, sending])
+
+  const endHold = useCallback(async () => {
+    if (!holdRef.current) return
+    holdRef.current = false
+    const heldMs = Date.now() - holdStartTsRef.current
+    try {
+      await recorder.stop()
+    } catch {
+      /* never started */
+    }
+    if (heldMs < 500) return // accidental tap — nothing worth transcribing
+    try {
+      setTranscribing(true)
+      const uri = recorder.uri
+      if (!uri) throw new Error('No audio captured')
+      const text = await transcribe(uri)
+      if (text) await send(text)
+    } catch (e) {
+      Alert.alert('Voice', e instanceof Error ? e.message : 'Transcription failed')
+    } finally {
+      setTranscribing(false)
+    }
+  }, [recorder, send])
 
   const apply = useCallback(async () => {
     if (!plan || applying) return
@@ -213,9 +233,25 @@ export default function PlanScreen() {
   const headerSub = useMemo(() => {
     if (transcribing) return 'Transcribing…'
     if (sending) return 'Thinking…'
-    if (recorderState.isRecording) return 'Listening…'
+    if (recorderState.isRecording) return 'Listening… release to send'
     return 'Tell me about your day'
   }, [transcribing, sending, recorderState.isRecording])
+
+  // One-tap starters. Prompts about the current day flip the target date to
+  // today first (a fresh session — chips only show when the chat is empty).
+  const quickPrompt = useCallback(
+    (text: string, needsToday: boolean) => {
+      let target = date
+      if (needsToday && date !== todayStr()) {
+        target = todayStr()
+        setDate(target)
+        setPlan(null)
+        firstPromptRef.current = ''
+      }
+      void send(text, target)
+    },
+    [date, send],
+  )
 
   return (
     <KeyboardAvoidingView
@@ -288,8 +324,25 @@ export default function PlanScreen() {
             <Text style={[styles.emptyTitle, { color: colors.text2 }]}>Plan your day, out loud or by text</Text>
             <Text style={[styles.emptyBody, { color: colors.text3 }]}>
               “Tomorrow I want to gym at 7, deep work from 9 to 12, lunch with mom, then admin in the
-              afternoon.” I’ll ask questions, suggest a schedule, and add it to your day.
+              afternoon.” I’ll ask questions, suggest a schedule, and add it to your day. Hold the mic
+              to talk; release to send.
             </Text>
+            <View style={styles.quickRow}>
+              {([
+                { label: 'Plan my day', text: 'Plan my day.', today: false },
+                { label: 'Replan from now', text: 'Replan the rest of my day from now — keep what already happened.', today: true },
+                { label: "What's left today?", text: "What's left on my plan and tasks today?", today: true },
+              ] as const).map((p) => (
+                <Pressable
+                  key={p.label}
+                  onPress={() => quickPrompt(p.text, p.today)}
+                  disabled={busy}
+                  style={[styles.quickChip, { borderColor: colors.border2, backgroundColor: colors.surface1 }]}
+                >
+                  <Text style={[styles.quickChipTxt, { color: colors.text2 }]}>{p.label}</Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
         )}
 
@@ -324,6 +377,7 @@ export default function PlanScreen() {
                 </Text>
                 <Text style={[styles.planItemTitle, { color: colors.text1 }]} numberOfLines={1}>
                   {it.title}
+                  {it.todo_id ? '  ☑' : ''}
                 </Text>
               </View>
             ))}
@@ -364,13 +418,15 @@ export default function PlanScreen() {
           </Pressable>
         ) : (
           <Pressable
-            onPress={toggleRecording}
+            onPressIn={startHold}
+            onPressOut={endHold}
             disabled={transcribing || sending}
             style={[
               styles.circleBtn,
               {
                 backgroundColor: recorderState.isRecording ? ACCENT : colors.surface3,
                 opacity: transcribing || sending ? 0.6 : 1,
+                transform: [{ scale: recorderState.isRecording ? 1.15 : 1 }],
               },
             ]}
           >
@@ -477,6 +533,9 @@ const styles = StyleSheet.create({
   dateLabel: { fontSize: 14, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: -0.2 },
   chat: { padding: 16, paddingBottom: 24, gap: 10 },
   empty: { paddingVertical: 40, paddingHorizontal: 8, gap: 10 },
+  quickRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 14 },
+  quickChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+  quickChipTxt: { fontSize: 13, fontFamily: fonts.ui, fontWeight: '500' },
   emptyTitle: { fontSize: 17, fontFamily: fonts.displaySemiBold, fontWeight: '600', textAlign: 'center' },
   emptyBody: { fontSize: 14, fontFamily: fonts.ui, lineHeight: 21, textAlign: 'center' },
   bubble: { maxWidth: '85%', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 16 },

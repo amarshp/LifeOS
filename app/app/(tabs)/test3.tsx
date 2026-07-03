@@ -114,7 +114,7 @@ export default function Test3Screen() {
         {/* One quiet next line */}
         {nextBlock && (
           <Pressable
-            onPress={() => timer.start({ categoryId: nextBlock.category_id, title: nextBlock.title, tags: nextBlock.tags })}
+            onPress={() => timer.start({ categoryId: nextBlock.category_id, title: nextBlock.title, tags: nextBlock.tags, todoId: nextBlock.todo_id, calendarBlockId: nextBlock.id })}
             hitSlop={8}
             style={styles.nextLine}
           >

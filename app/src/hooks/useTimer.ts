@@ -62,6 +62,8 @@ export function useTimer() {
     tags?: string[]
     startTime?: string
     notes?: string | null
+    todoId?: string | null
+    calendarBlockId?: string | null
   }) => {
     await timeEntries.startTimerStopPrevious(params)
     await refresh()
@@ -74,6 +76,8 @@ export function useTimer() {
     tags?: string[]
     startTime?: string
     notes?: string | null
+    todoId?: string | null
+    calendarBlockId?: string | null
   }) => {
     await timeEntries.startTimer({
       category_id: params.categoryId,
@@ -82,6 +86,8 @@ export function useTimer() {
       is_running: true,
       tags: params.tags ?? [],
       notes: params.notes ?? null,
+      todo_id: params.todoId ?? null,
+      calendar_block_id: params.calendarBlockId ?? null,
     })
     await refresh()
     emitTimerChange()

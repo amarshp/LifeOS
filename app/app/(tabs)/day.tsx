@@ -34,7 +34,8 @@ import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
 import * as tagsService from '../../src/services/tags'
-import type { Category, CalendarBlock, TimeEntry, Tag } from '../../src/types/database'
+import * as todosService from '../../src/services/todos'
+import type { Category, CalendarBlock, TimeEntry, Tag, Todo } from '../../src/types/database'
 import type { TagUsage } from '../../src/services/tags'
 
 const START_HOUR = 0
@@ -1261,17 +1262,17 @@ export default function DayScreen() {
         initialMode={entrySheetInitialMode}
         initialLogPastRange={entrySheetRange}
         onClose={closeEntrySheet}
-        onStart={async (categoryId, title, tags, parallel, startTime, notes) => {
+        onStart={async (categoryId, title, tags, parallel, startTime, notes, todoId) => {
           if (parallel) {
-            await timer.startParallel({ categoryId, title, tags, startTime, notes })
+            await timer.startParallel({ categoryId, title, tags, startTime, notes, todoId })
           } else {
-            await timer.start({ categoryId, title, tags, startTime, notes })
+            await timer.start({ categoryId, title, tags, startTime, notes, todoId })
           }
           closeEntrySheet()
           loadData()
         }}
-        onSaveCompleted={async (categoryId, title, tags, startTime, endTime, notes) => {
-          await timeEntriesService.addCompletedEntry({ category_id: categoryId, title, tags, start_time: startTime, end_time: endTime, notes })
+        onSaveCompleted={async (categoryId, title, tags, startTime, endTime, notes, todoId) => {
+          await timeEntriesService.addCompletedEntry({ category_id: categoryId, title, tags, start_time: startTime, end_time: endTime, notes, todo_id: todoId })
           closeEntrySheet()
           loadData()
         }}
@@ -1453,8 +1454,8 @@ interface AddEntrySheetProps {
   initialMode: 'timer' | 'past' | 'plan'
   initialLogPastRange: PastEntryRange | null
   onClose: () => void
-  onStart: (categoryId: string, title: string, tags: string[], parallel: boolean, startTime?: string, notes?: string | null) => void | Promise<void>
-  onSaveCompleted: (categoryId: string, title: string, tags: string[], startTime: string, endTime: string, notes?: string | null) => void | Promise<void>
+  onStart: (categoryId: string, title: string, tags: string[], parallel: boolean, startTime?: string, notes?: string | null, todoId?: string | null) => void | Promise<void>
+  onSaveCompleted: (categoryId: string, title: string, tags: string[], startTime: string, endTime: string, notes?: string | null, todoId?: string | null) => void | Promise<void>
   onSavePlan: () => void | Promise<void>
   onCategoryCreated: (cat: Category) => void | Promise<void>
 }
@@ -1486,6 +1487,10 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
   const [categoryUsage, setCategoryUsage] = useState<Map<string, number>>(new Map())
   const [titleIsAuto, setTitleIsAuto] = useState(true)
   const [notes, setNotes] = useState('')
+  // Optional task link: doing/finishing this entry (or planning the block)
+  // carries todo_id — stopping a linked timer auto-completes the task.
+  const [openTodos, setOpenTodos] = useState<Todo[]>([])
+  const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null)
 
   const categoryOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -1536,9 +1541,11 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
   useEffect(() => {
     if (!visible) return
     setTitleIsAuto(true)
+    setSelectedTodoId(null)
     timeEntriesService.getCategoryUsageNearHour(new Date().getHours(), new Date().getDay())
       .then(usage => setCategoryUsage(new Map(usage.map(u => [u.category_id, u.count]))))
       .catch(() => {})
+    todosService.getOpenTodos().then(setOpenTodos).catch(() => {})
     if (initialLogPastRange) {
       syncStartFields(new Date(initialLogPastRange.startTime), true)
       syncEndFields(new Date(initialLogPastRange.endTime))
@@ -1648,6 +1655,24 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     }
   }
 
+  function toggleTodo(t: Todo) {
+    if (selectedTodoId === t.id) {
+      // Deselect → return the name to auto-fill (category · tags).
+      setSelectedTodoId(null)
+      const cat = categoryOptions.find(c => c.id === selectedCat)
+      const parts: string[] = []
+      if (cat) parts.push(cat.name)
+      parts.push(...tags)
+      setTitle(parts.join(' · '))
+      setTitleIsAuto(true)
+      return
+    }
+    setSelectedTodoId(t.id)
+    if (t.category_id) setSelectedCat(t.category_id)
+    setTitle(t.title)
+    setTitleIsAuto(false)
+  }
+
   function addTag() {
     const t = tagInput.trim()
     if (t && !tags.includes(t)) {
@@ -1715,6 +1740,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
           recurrence: planRecurrence as 'none' | 'daily' | 'weekdays' | 'mwf' | 'weekly' | 'custom',
           tags: allTags,
           notes: notes.trim() || null,
+          todo_id: selectedTodoId,
         })
         setTitle('')
         setTitleIsAuto(true)
@@ -1722,6 +1748,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
         setTagInput('')
         setNotes('')
         setPlanRecurrence('none')
+        setSelectedTodoId(null)
         await onSavePlan()
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Failed to save'
@@ -1755,12 +1782,13 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       Keyboard.dismiss()
       try {
         await tagsService.ensureTagsForCategory(effectiveCat, allTags)
-        await onSaveCompleted(effectiveCat, effectiveTitle, allTags, start.toISOString(), end.toISOString(), notes.trim() || null)
+        await onSaveCompleted(effectiveCat, effectiveTitle, allTags, start.toISOString(), end.toISOString(), notes.trim() || null, selectedTodoId)
         setTitle('')
         setTitleIsAuto(true)
         setTags([])
         setTagInput('')
         setNotes('')
+        setSelectedTodoId(null)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Failed to save'
         setError(msg)
@@ -1792,7 +1820,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       await tagsService.ensureTagsForCategory(effectiveCat, allTags)
       // Hard cap: never attempt a parallel start when 2 are already running
       // (the DB trigger would reject it). A normal start stops both instead.
-      await onStart(effectiveCat, effectiveTitle, allTags, runningCount >= 2 ? false : parallel, startTime, notes.trim() || null)
+      await onStart(effectiveCat, effectiveTitle, allTags, runningCount >= 2 ? false : parallel, startTime, notes.trim() || null, selectedTodoId)
       setTitle('')
       setTitleIsAuto(true)
       setTags([])
@@ -1800,6 +1828,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       setNotes('')
       setParallel(false)
       setUseCustomStart(false)
+      setSelectedTodoId(null)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to start timer'
       setError(msg)
@@ -1905,6 +1934,33 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
                       style={styles.timerStartTime}
                     />
                   </View>
+                )}
+              </>
+            )}
+
+            {openTodos.length > 0 && (
+              <>
+                <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Task (optional)</Text>
+                <View style={sheetStyles.chips}>
+                  {openTodos.slice(0, 8).map(t => {
+                    const sel = selectedTodoId === t.id
+                    return (
+                      <Pressable
+                        key={t.id}
+                        onPress={() => toggleTodo(t)}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: sel ? tc.text1 : tc.border2, backgroundColor: sel ? tc.text1 : 'transparent' }}
+                      >
+                        <Text style={{ color: sel ? tc.bg : tc.text2, fontSize: 12, fontFamily: fonts.ui, maxWidth: 150 }} numberOfLines={1}>
+                          {t.title}
+                        </Text>
+                      </Pressable>
+                    )
+                  })}
+                </View>
+                {selectedTodoId && (
+                  <Text style={{ color: tc.text4, fontSize: 11.5, fontFamily: fonts.ui, marginTop: 8 }}>
+                    {mode === 'plan' ? 'Block linked to this task.' : 'Finishing this entry marks the task done.'}
+                  </Text>
                 )}
               </>
             )}

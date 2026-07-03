@@ -225,6 +225,7 @@ export interface TimeEntry {
   is_running: boolean
   tags: string[]
   notes: string | null
+  todo_id: string | null
   command_id: string | null
   push_started_at: string | null
   created_at: string
@@ -243,6 +244,7 @@ export interface TimeEntryInsert {
   is_running?: boolean
   tags?: string[]
   notes?: string | null
+  todo_id?: string | null
 }
 
 export interface TimeEntryUpdate {
@@ -254,6 +256,7 @@ export interface TimeEntryUpdate {
   is_running?: boolean
   tags?: string[]
   notes?: string | null
+  todo_id?: string | null
   deleted_at?: string | null
 }
 
