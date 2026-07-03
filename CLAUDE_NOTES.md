@@ -36,6 +36,11 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - **Mistake I made**: ran that repro directly against the real account without asking first, since I treated it as "just replaying what they already sent." It mutated real data (wrongly). Manually fixed (24h shift on 4 entries + removed an ambiguous overlap), then fixed the actual prompt bug (commit `61bba35`). New standing rule for myself: [[feedback-real-data-mutations]] — mutating repros always need the test account or explicit go-ahead, never real data, even mid-debug.
 - Fix: system prompt states `TODAY'S DATE` / `YESTERDAY'S DATE` explicitly + new "BACKFILL ACROSS MIDNIGHT" rule (sleep period = hinge) + worked few-shot example. Verified clean on the test account with a synthetic 30h-stale-timer + matching overnight story.
 
+### Say-the-date feature (2026-07-03, later still)
+- User's actual complaint: "why even have date [picker]?" — musing about dropping the explicit date UI entirely in favor of pure conversational date handling. Talked through the tradeoff instead of building blind: full conversational (agent infers date per-message) needs message-level date tagging + makes "Apply" ambiguous which day it targets — too big a rebuild for the daily benefit. Recommended keeping per-day sessions (matches `daily_plans` being date-keyed) but making date-picking smarter. User agreed, built that.
+- Shipped (`1ff3f7f`): default date tomorrow→today; `chrono-node` (new dep, pure JS, no rebuild) extracts a day from the OPENING message of a fresh chat only — gated on `start.isCertain('day'|'weekday')` so a bare "at 7" doesn't misfire into "today". Scoping to first-message-only was the key safety call: a date named mid-conversation must NOT reset an in-progress plan (verified live — "call the plumber on Tuesday" mid-Monday-planning left the Monday plan untouched).
+- `src/lib/parseDate.ts` — small wrapper, reuses existing `toLocalDateStr`. Verified live via the browser rig (separate port, didn't touch the phone tunnel): "let's plan Monday" on a Friday → header + Apply both landed on the correct upcoming Monday.
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
