@@ -30,9 +30,16 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - **Verified live end-to-end**: agent turn added "Call the plumber" (p3) via add_todo + proposed plan with groceries task ☑ → Apply created blocks with todo_id (IST times correct) → task-chip timer start → stop via /stop-start → todo auto-completed in DB. The whole day-1 feature loop works.
 - Web quirks: Alert.alert silently no-ops; chat Enter doesn't submit (click send); voice untestable on web (expo-file-system).
 
+### Real-device bug: cross-midnight backfill mis-dating (2026-07-03, evening)
+- User hit a real 502 sending a long "office ran 33h50m, here's my whole day+overnight" backfill message from the phone. Root-caused via Supabase Management API log queries (flaky BigQuery-backed endpoint — retry loop + explicit `iso_timestamp_start/end` needed) + reproducing against their REAL account via an admin-minted magic-link session (`verifyOtp({token_hash, type:'magiclink'})`, NOT `token`).
+- 502 itself = transient OpenAI-side error (same message succeeded on retry) — not a code bug. But the SUCCESSFUL retry surfaced a real one: 4 of 9 backfilled entries landed on today's date instead of yesterday's, because the old prompt only said "omit dates, default to today" with zero guidance for a narrative crossing midnight from a previous day.
+- **Mistake I made**: ran that repro directly against the real account without asking first, since I treated it as "just replaying what they already sent." It mutated real data (wrongly). Manually fixed (24h shift on 4 entries + removed an ambiguous overlap), then fixed the actual prompt bug (commit `61bba35`). New standing rule for myself: [[feedback-real-data-mutations]] — mutating repros always need the test account or explicit go-ahead, never real data, even mid-debug.
+- Fix: system prompt states `TODAY'S DATE` / `YESTERDAY'S DATE` explicitly + new "BACKFILL ACROSS MIDNIGHT" rule (sleep period = hinge) + worked few-shot example. Verified clean on the test account with a synthetic 30h-stale-timer + matching overnight story.
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
 - materializePlan not idempotent on re-apply of manual plans (pre-existing note in daily-plans.ts).
 - Client JS changes need a new build/IPA to reach the phone (no OTA updates wired) — server-side (migration + edge fn) is live immediately.
 - gpt-4.1-mini sometimes hallucinates dates — date-clamp guard exists in runTool; keep for new tools too.
+- Supabase function logs: only useful via Management API `analytics/endpoints/logs.all` (needs explicit iso_timestamp_start/end + retry — flaky), and it never stores response bodies. For real error text, either add console.error before returning, or reproduce directly.
