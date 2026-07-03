@@ -30,10 +30,17 @@ interface Body {
   expected_sleep_hours?: number // user's nightly sleep target (Settings)
 }
 
+// CORS: the Expo WEB build (localhost dev / testing) calls from a browser and
+// needs preflight + explicit allow headers; native apps ignore these.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+} as const
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
 }
 
@@ -850,6 +857,7 @@ THE PLAN FIELD (structured output):
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
 
   const authHeader = req.headers.get('Authorization')

@@ -9,14 +9,21 @@ const TTS_MODEL = 'gpt-4o-mini-tts'
 const VOICE = 'nova'
 const MAX_CHARS = 2000
 
+// CORS for the Expo WEB build (browser preflight); native apps ignore these.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+} as const
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
 }
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
   if (!req.headers.get('Authorization')) return json({ error: 'missing authorization' }, 401)
 
