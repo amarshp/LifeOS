@@ -30,7 +30,6 @@ import { FABs } from '../../src/components/FABs'
 import { CategoryChip } from '../../src/components/CategoryChip'
 import { TimePicker } from '../../src/components/TimePicker'
 import { UndoToast } from '../../src/components/UndoToast'
-import { WeekTimeline } from '../../src/components/WeekTimeline'
 import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
@@ -312,8 +311,7 @@ function isDateInRange(date: string, startDate: string, endDate: string): boolea
 export default function DayScreen() {
   const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string }>()
   const timer = useTimer()
-  const { colors: tc, snapDragTo, hideSleep, sleepStart, sleepEnd, reduceMotion, weekStartsOn } = useSettings()
-  const [viewMode, setViewMode] = useState<'day' | 'week'>('day')
+  const { colors: tc, snapDragTo, hideSleep, sleepStart, sleepEnd, reduceMotion } = useSettings()
   // Declared before the pinch gesture below, which reads visibleHours.
   const effectiveStart = hideSleep ? sleepEnd : START_HOUR
   const effectiveEnd = hideSleep ? sleepStart : END_HOUR
@@ -906,21 +904,6 @@ export default function DayScreen() {
     }
   }, [dateStr, getCenteredMinute, scrollToTarget, windowEndDate, windowStartDate])
 
-  // Absolute jump (vs. changeDate's relative ±1) — used when Week view hands
-  // back a tapped day. Mirrors the params.date effect above.
-  const jumpToDate = useCallback((targetDateStr: string) => {
-    const { y, m, d } = parseLocalDate(targetDateStr)
-    setSelectedDate(new Date(y, m - 1, d))
-    setWindowStartDate(addDays(targetDateStr, -INITIAL_WINDOW_DAYS))
-    setWindowEndDate(addDays(targetDateStr, INITIAL_WINDOW_DAYS))
-    pendingScrollTargetRef.current = {
-      date: targetDateStr,
-      minute: targetDateStr === toLocalDateStr(new Date()) ? new Date().getHours() * 60 + new Date().getMinutes() : effectiveStart * 60,
-      center: true,
-    }
-    setViewMode('day')
-  }, [effectiveStart])
-
   const prevDate = new Date(selectedDate)
   prevDate.setDate(selectedDate.getDate() - 1)
   const nextDate = new Date(selectedDate)
@@ -1007,26 +990,6 @@ export default function DayScreen() {
 
   return (
     <View style={[styles.safe, { backgroundColor: tc.bg }]}>
-      {/* Day / Week toggle */}
-      <View style={[styles.viewToggleRow, { borderBottomColor: tc.border }]}>
-        <View style={[styles.viewSegmented, { backgroundColor: tc.surface3 }]}>
-          {(['day', 'week'] as const).map((v) => (
-            <Pressable
-              key={v}
-              onPress={() => setViewMode(v)}
-              style={[styles.viewSegment, viewMode === v && [styles.viewSegmentActive, { backgroundColor: tc.surface1 }]]}
-            >
-              <Text style={[styles.viewSegmentTxt, { color: viewMode === v ? tc.text1 : tc.text3 }]}>
-                {v === 'day' ? 'Day' : 'Week'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      {viewMode === 'week' ? (
-        <WeekTimeline colors={tc} weekStartsOn={weekStartsOn} onSelectDay={jumpToDate} />
-      ) : (
     <GestureDetector gesture={swipeGesture}>
     <View style={{ flex: 1 }}>
       {/* Date nav */}
@@ -1287,7 +1250,6 @@ export default function DayScreen() {
       </GestureDetector>
     </View>
     </GestureDetector>
-      )}
 
       <FABs onPress={openNewTimerSheet} />
 
@@ -3360,18 +3322,6 @@ const editStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
-  viewToggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-  },
-  viewSegmented: { flexDirection: 'row', borderRadius: 11, padding: 3 },
-  viewSegment: { paddingVertical: 7, paddingHorizontal: 22, borderRadius: 8 },
-  viewSegmentActive: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
-  viewSegmentTxt: { fontSize: 13.5, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: -0.1 },
   dateNav: {
     flexDirection: 'row',
     alignItems: 'center',
