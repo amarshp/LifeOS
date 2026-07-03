@@ -52,26 +52,19 @@
 - Quick-start category chips: top N categories (configurable via quickStartCount setting) shown as colored-dot + name chips; sorted by weighted frequency (same hour ×3, ±1 hr ×2, ±2 hr ×1, same weekday +2, ±1 day +1, over 90 days); excludes already-running categories; tapping starts a timer immediately
 - Next planned block shown with title and relative start time; tapping starts a timer for that block
 
-## Timeline (Day / Week toggle)
-- `Timeline` tab (route `/day`, unchanged so existing deep links keep working): a big Day/Week segmented control at the top switches between two modes sharing the same tab
-- **Day mode**: timeline showing all entries and calendar blocks for the selected date
-  - Overlapping/parallel entries split into left-right lanes
-  - Tap any entry or block to edit it inline (time, category, tags, name)
-  - Tap a gap in the timeline to log a past entry for that time slot
-  - Navigate between days by swiping or tapping the date header
-  - Undo delete: deleting an entry or block shows a 5-second bottom toast with UNDO (soft-delete + `restoreEntry`/`restoreBlock`)
-  - Pinch-to-zoom with wider range (0.3×–8×) for fine-grained or panoramic views; pinch snaps to discrete levels so it stays crisp (no stretch) and relayouts only on level change for smooth framerate
-  - Hide sleep: toggle in Settings collapses the sleep window (configurable bedtime / wake time, default 11 PM–7 AM) out of the timeline so only waking hours are shown; per-hour pixel density stays constant
-- **Week mode** (`src/components/WeekTimeline.tsx`, embedded inline — not a separate route): 7-column grid showing entries and blocks for the current week
-  - Overlapping entries in each day column split into left-right lanes
-  - Running parallel timers shown side-by-side
-  - Default zoom level set higher (0.85×) for better readability on open
-  - Tapping a day column jumps back to Day mode at that date (no navigation — same tab, same screen)
-- FAB and the add/edit sheets are available in both modes
-- The "Show Week tab" setting is gone — Week is always reachable via the toggle, nothing to hide
+## Day View
+- `Day` tab: timeline showing all entries and calendar blocks for the selected date
+- Overlapping/parallel entries split into left-right lanes
+- Tap any entry or block to edit it inline (time, category, tags, name)
+- Tap a gap in the timeline to log a past entry for that time slot
+- Navigate between days by swiping or tapping the date header
+- Undo delete: deleting an entry or block shows a 5-second bottom toast with UNDO (soft-delete + `restoreEntry`/`restoreBlock`)
+- Pinch-to-zoom with wider range (0.3×–8×) for fine-grained or panoramic views; pinch snaps to discrete levels so it stays crisp (no stretch) and relayouts only on level change for smooth framerate
+- Hide sleep: toggle in Settings collapses the sleep window (configurable bedtime / wake time, default 11 PM–7 AM) out of the timeline so only waking hours are shown; per-hour pixel density stays constant
+- A Day/Week toggle was tried and parked (2026-07-04, UX didn't land) — Week's grid still exists as `src/components/WeekTimeline.tsx` but isn't wired into any screen right now
 
 ## Insights View
-- 5th tab (Home / Timeline / Agent / Tasks / Insights / Settings) with a bar-chart icon
+- 5th tab (Home / Day / Agent / Tasks / Insights / Settings) with a bar-chart icon
 - Global Day / Week / Month toggle drives the overview, breakdown, and time chart; deltas compare to the same *elapsed* slice of the previous period (month-to-date vs same days last month, not a full month)
 - Hero strip: all-time hours, equivalent full days, total entry count, tracking-since line
 - Overview: period total + Δ vs last; Essential-vs-Discretionary split bar so unavoidable time doesn't dominate; category donut; one merged breakdown grouped Discretionary-then-Essential — each row shows share %, time, Δ, and its tags by time underneath (no separate legend/tags lists)
@@ -103,7 +96,7 @@
 - **Tasks attach to entries & blocks**: the add sheet (Start timer / Log past / Plan block) has an optional "Task" chip row — picking one links `todo_id`, prefills title/category. Stopping a linked timer, logging a linked past entry, or the handoff-stop of a linked timer **auto-completes the task** (recurring tasks roll forward). Home's "next planned" tap carries the block's task onto the timer.
 - Recurrence (Once/Daily/Weekdays/M W F/Weekly): a recurring todo rolls forward — completing it records the occurrence and advances `next_due` (it never leaves the list); one-off todos complete and drop out. Completions are unique per occurrence (no streak inflation).
 - **Tasks is its own bottom tab**, not nested under Agent: task list fills the screen, date bar below it, "Add a task…" input bar at the bottom — showing the backlog grouped Overdue / Today / Upcoming / No date, with priority dot, deadline, step progress, and a ↻ marker for recurring. Its own date, independent of Agent's planning-session date.
-- **Add to plan**: "+ plan" on a todo creates a todo-linked `calendar_block` on the Tasks tab's selected date (default 1-hour slot, adjust in Timeline) → it appears in Timeline/Home. Needs the todo to have a category.
+- **Add to plan**: "+ plan" on a todo creates a todo-linked `calendar_block` on the Tasks tab's selected date (default 1-hour slot, adjust in Day) → it appears in Day/Home. Needs the todo to have a category.
 - The **AI/voice planner** sees open todos (priority, deadline, recurrence, category) as backlog and schedules the relevant ones into the day's plan — you don't pre-schedule; the plan is built on the day from tasks + priority.
 - Data: `todos` / `todo_steps` / `todo_completions` tables; `todo_id` bridge on `daily_plan_items` and `calendar_blocks` (migration `20260617_002`).
 
@@ -132,7 +125,7 @@
 - Apply materializes uncategorized items into the fallback (first) category instead of dropping them
 - **Backfill across midnight**: recounting a stretch that spans two calendar days (e.g. "left office 6:30 yesterday … worked till 1am … slept … woke today at 8") now dates every activity correctly — the prompt is given explicit TODAY'S/YESTERDAY'S dates and a sleep-period hinge rule, so pre-sleep activities land on yesterday and post-wake activities land on today instead of everything defaulting to today
 - Structured turns: each reply is `{ reply, plan }` — `plan` stays empty until there's a concrete schedule, then refines as you adjust. Items map to your real categories (model is given category ids; hallucinated ids are dropped server-side)
-- Apply: one tap materializes the plan into `calendar_blocks` for that date (shows in Timeline/Home). Replace semantics — re-applying wipes the prior AI plan for the day so there are never duplicates. Items with no matching category are reported, not silently dropped
+- Apply: one tap materializes the plan into `calendar_blocks` for that date (shows in Day/Home). Replace semantics — re-applying wipes the prior AI plan for the day so there are never duplicates. Items with no matching category are reported, not silently dropped
 - Backed by `daily_plans` + `daily_plan_items` (provenance: source=ai, prompt, model, generated_at). OpenAI key stays server-side in the `plan-chat` edge function (gpt-4o-mini, JWT-verified)
 
 ## Live Activities (iOS)
@@ -217,7 +210,7 @@ Recommended design (post Codex review — "Correct V1"):
 - NEXT after token lands: server sends `start` push to `api.sandbox.push.apple.com`, topic `com.pedapatiamarsh.lifeos.push-type.liveactivity`, `apns-push-type: liveactivity` (needs APNs .p8 auth key). Then wire Siri/Edge Function to fire the push so the Island appears the instant the user speaks.
 
 ## Google Calendar import (PLANNED — not built)
-- One-way, read-only: pull Google Calendar events via the Google API (add the Calendar scope to the existing Google OAuth) and show them as read-only blocks in Agent/Timeline. Schema already supports it (`BlockSource = 'google_calendar'`). Tapping a meeting can start a timer against it. No embedded Google UI (the app already has its own timeline). Two-way sync deferred further.
+- One-way, read-only: pull Google Calendar events via the Google API (add the Calendar scope to the existing Google OAuth) and show them as read-only blocks in Agent/Day. Schema already supports it (`BlockSource = 'google_calendar'`). Tapping a meeting can start a timer against it. No embedded Google UI (the app already has its own timeline). Two-way sync deferred further.
 
 ## Other deferred
 - Lock-screen / home quick-start buttons: top-N tasks by historic use at the current time (one-tap start), beyond the generic text-box shortcut.

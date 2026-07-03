@@ -63,6 +63,11 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - **QC'd live in the browser rig** (fresh port, not the phone tunnel): tab bar shows Home/Timeline/Agent/Tasks/Insights/Settings; Timeline Day mode renders correctly with old test data intact; Week mode renders the grid; tapping a week day-column correctly jumped back to Day view at that exact date ("Sat · Jul 4 · Today"); Agent tab is chat-only; Tasks tab works standalone; Settings' "Show Week tab" row is gone. tsc clean throughout, zero stray `showWeekTab`/`WeekIcon` references left in the repo.
 - **Aside**: found `codex_progress.md` + `UX_FLOW_REDESIGN.md` sitting untracked in the repo root — the user has a PARALLEL Codex session going, exploring a much bigger "proactive brain" / simplified-navigation redesign. Confirmed read-only (no code touched, per its own log) before proceeding — didn't touch those files, they're not mine to manage. Notably its proposed nav ("simplified Now/Timeline/Agent") independently landed on the same Timeline/Agent names — good convergence signal, not a conflict. Worth mentioning to the user that both threads are aligned.
 
+### Week view parked (2026-07-04, minutes later)
+- User: "day week toggle looks ass... park aside week view, I don't think I will use it." Reverted day.tsx to exactly its pre-toggle state (removed viewMode state, jumpToDate, the segmented control JSX+styles, WeekTimeline import) and renamed the tab back "Day" (from "Timeline" — since without a toggle, "Timeline" no longer described anything the plain Day view didn't already). `commit 261f602`.
+- Deliberately did NOT delete `src/components/WeekTimeline.tsx` — "for now"/"park aside" phrasing meant keep the code, just unwire it. If Week ever comes back, the extraction work from the earlier commit is still there to reuse, just needs a different (better) entry point than a bad-looking toggle — maybe its own tab again, or a swipe gesture instead of a segmented control.
+- tsc clean, verified visually — Day view back to its original clean look, tab bar back to Home/Day/Agent/Tasks/Insights/Settings.
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
