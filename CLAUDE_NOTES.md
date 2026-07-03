@@ -24,6 +24,12 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - Commit `ef96c3f` on `claude-auto`. Migration `20260703_001` pushed to prod; `plan-chat` redeployed (401-gate smoke-tested). tsc clean.
 - Supabase gotcha: CLI migration "version" = leading digits only → same-day `_001`/`_002` files share a version and confuse history. Repaired with `migration repair --status applied 20260615 20260617`, then stashed the `_002` files during `db push` so only `20260703_001` applied. Remember for the next same-day second migration.
 
+### Live web-testing rig (2026-07-03, later same day)
+- `cd app && npx expo start --web` → full app in browser, driven via Playwright. Dedicated test user `claude.lifeos.tester@gmail.com` (confirmed via admin API — email confirmation is ON). Details in memory `lifeos-web-testing`.
+- Added CORS to plan-chat/plan-transcribe/plan-tts (commit 6c80860) — browser preflight; native unaffected.
+- **Verified live end-to-end**: agent turn added "Call the plumber" (p3) via add_todo + proposed plan with groceries task ☑ → Apply created blocks with todo_id (IST times correct) → task-chip timer start → stop via /stop-start → todo auto-completed in DB. The whole day-1 feature loop works.
+- Web quirks: Alert.alert silently no-ops; chat Enter doesn't submit (click send); voice untestable on web (expo-file-system).
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
