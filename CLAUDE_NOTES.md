@@ -41,6 +41,12 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - Shipped (`1ff3f7f`): default date tomorrow→today; `chrono-node` (new dep, pure JS, no rebuild) extracts a day from the OPENING message of a fresh chat only — gated on `start.isCertain('day'|'weekday')` so a bare "at 7" doesn't misfire into "today". Scoping to first-message-only was the key safety call: a date named mid-conversation must NOT reset an in-progress plan (verified live — "call the plumber on Tuesday" mid-Monday-planning left the Monday plan untouched).
 - `src/lib/parseDate.ts` — small wrapper, reuses existing `toLocalDateStr`. Verified live via the browser rig (separate port, didn't touch the phone tunnel): "let's plan Monday" on a Friday → header + Apply both landed on the correct upcoming Monday.
 
+### Plan tab restyle (2026-07-03, later still)
+- Removed the full-screen hands-free voice overlay entry point from Plan tab (wave button + VoiceChatOverlay usage + voiceTurn callback) — user didn't like it. Left `src/components/VoiceChatOverlay.tsx` itself untouched (not deleted) in case it's wanted again; just unwired.
+- Merged the old title row + separate Plan/Tasks tab row into one header row (tabs left, TTS speaker icon right) — same chip/underline visual style as before, just relocated/restructured (tabBtn went from `flex:1` full-split to compact padded chips since it now shares the row with the icon).
+- Date bar dropped its "Planning · " prefix (just the date now) and moved below the chat, right above the input bar. Tasks tab keeps its own date-bar copy at the top of that branch — kept deliberately, since `TodoBacklog`'s "+ plan" needs `planDate` visible/changeable up front; the "move below" ask was specifically about the chat view.
+- Verified visually via the browser rig (screenshots) — clean single-row header on both tabs, no wave button, date bar in the new position.
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
