@@ -375,9 +375,6 @@ export default function SettingsScreen() {
         <SettingsSection title="03 - Day & week">
           <SettingsRow label="Week starts on" sub={settings.weekStartsOn} onPress={() => setActiveSheet('weekStart')} />
           <SettingsRow label="Snap drag to" sub={`${settings.snapDragTo} min`} onPress={() => setActiveSheet('snap')} />
-          <SettingsRow label="Show Week tab">
-            <ToggleSwitch on={settings.showWeekTab} onToggle={() => settings.setShowWeekTab(!settings.showWeekTab)} />
-          </SettingsRow>
           <SettingsRow label="Expected sleep" sub={formatSleepHours(settings.expectedSleepHours)} onPress={() => setActiveSheet('expectedSleep')} />
           <SettingsRow label="Hide sleep">
             <ToggleSwitch on={settings.hideSleep} onToggle={() => settings.setHideSleep(!settings.hideSleep)} />

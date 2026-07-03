@@ -1,20 +1,27 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import { useFocusEffect, useRouter } from 'expo-router'
-import { colors, spacing, fonts } from '../../src/theme/tokens'
-import { useSettings } from '../../src/contexts/SettingsContext'
-import { toLocalDateStr } from '../../src/lib/date'
-import { getVisiblePlannedBlocks } from '../../src/lib/planned-blocks'
-import { daySegmentPx, addLocalDays } from '../../src/lib/time-range'
-import { createTimelineTicks } from '../../src/lib/timeline-granularity'
-import { useNow } from '../../src/hooks/useNow'
-import { useTimer } from '../../src/hooks/useTimer'
-import * as categoriesService from '../../src/services/categories'
-import * as calendarBlocksService from '../../src/services/calendar-blocks'
-import * as timeEntriesService from '../../src/services/time-entries'
-import type { Category, CalendarBlock, TimeEntry } from '../../src/types/database'
-import type { WeekStart } from '../../src/contexts/SettingsContext'
+import { useFocusEffect } from 'expo-router'
+import { fonts } from '../theme/tokens'
+import type { ColorPalette } from '../theme/tokens'
+import { toLocalDateStr } from '../lib/date'
+import { getVisiblePlannedBlocks } from '../lib/planned-blocks'
+import { daySegmentPx, addLocalDays } from '../lib/time-range'
+import { createTimelineTicks } from '../lib/timeline-granularity'
+import { useNow } from '../hooks/useNow'
+import { useTimer } from '../hooks/useTimer'
+import * as categoriesService from '../services/categories'
+import * as calendarBlocksService from '../services/calendar-blocks'
+import * as timeEntriesService from '../services/time-entries'
+import type { Category, CalendarBlock, TimeEntry } from '../types/database'
+import type { WeekStart } from '../contexts/SettingsContext'
+
+/**
+ * Week grid — embedded inside the Timeline tab (day.tsx) as the "Week" side of
+ * its Day/Week toggle. Self-contained (own date range, zoom, gestures); tapping
+ * a day column hands the date back to the parent via `onSelectDay` instead of
+ * navigating, since it's no longer its own route.
+ */
 
 const START_HOUR = 0
 const END_HOUR = 24
@@ -123,9 +130,13 @@ function getWeekNumber(date: Date): number {
   return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
 }
 
-export default function WeekScreen() {
-  const { colors: tc, weekStartsOn } = useSettings()
-  const router = useRouter()
+interface WeekTimelineProps {
+  colors: ColorPalette
+  weekStartsOn: WeekStart
+  onSelectDay: (dateStr: string) => void
+}
+
+export function WeekTimeline({ colors: tc, weekStartsOn, onSelectDay }: WeekTimelineProps) {
   const timer = useTimer()
   const now = useNow()
   const scrollRef = useRef<ScrollView>(null)
@@ -360,7 +371,7 @@ export default function WeekScreen() {
               <Pressable
                 key={i}
                 style={[s.dayCol, { height: railHeight }, isToday && [s.todayCol, { borderColor: tc.border2 }]]}
-                onPress={() => router.push({ pathname: '/(tabs)/day', params: { date: dateStr } })}
+                onPress={() => onSelectDay(dateStr)}
               >
                 {/* Time grid lines */}
                 {timelineTicks.map(tick => (
@@ -528,7 +539,7 @@ export default function WeekScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1 },
   scroll: { flex: 1 },
 
   header: {
@@ -539,14 +550,12 @@ const s = StyleSheet.create({
     paddingRight: 8,
   },
   headerTitle: {
-    color: colors.text1,
     fontSize: 16,
     fontWeight: '600',
     fontFamily: fonts.displaySemiBold,
     letterSpacing: -0.15,
   },
   headerSub: {
-    color: colors.text3,
     fontSize: 11.5,
     marginTop: 1,
     fontFamily: fonts.ui,
@@ -606,10 +615,8 @@ const s = StyleSheet.create({
   colHeaderToday: {
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1,
-    borderColor: colors.border2,
   },
   colDow: {
-    color: colors.text3,
     fontSize: 11,
     fontWeight: '500',
     letterSpacing: 0.4,
@@ -617,7 +624,6 @@ const s = StyleSheet.create({
     fontFamily: fonts.ui,
   },
   colNum: {
-    color: colors.text2,
     fontSize: 18,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
@@ -637,7 +643,6 @@ const s = StyleSheet.create({
   hourTick: {
     position: 'absolute',
     left: 0,
-    color: colors.text2,
     fontSize: 9,
     fontVariant: ['tabular-nums'],
     fontFamily: fonts.ui,
@@ -652,7 +657,6 @@ const s = StyleSheet.create({
   todayCol: {
     backgroundColor: 'rgba(255,255,255,0.015)',
     borderWidth: 1,
-    borderColor: colors.border2,
   },
   gridLine: {
     position: 'absolute',
@@ -660,7 +664,6 @@ const s = StyleSheet.create({
     right: 0,
     height: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
   },
   block: {
     position: 'absolute',
@@ -679,7 +682,6 @@ const s = StyleSheet.create({
   },
   blockSub: {
     fontSize: 10,
-    color: colors.text3,
     marginTop: 1,
     fontFamily: fonts.ui,
   },
@@ -688,7 +690,6 @@ const s = StyleSheet.create({
     left: -1,
     right: -1,
     height: 1.5,
-    backgroundColor: colors.text1,
     zIndex: 10,
   },
 })

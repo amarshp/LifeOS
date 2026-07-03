@@ -28,10 +28,6 @@ import { extractPlanDate } from '../../src/lib/parseDate'
 import { addLocalDays } from '../../src/lib/time-range'
 import { emitTimerChange } from '../../src/lib/timer-events'
 import { SPEECH_RECORDING } from '../../src/lib/speechRecording'
-import { TodoBacklog, type TodoBacklogHandle } from '../../src/components/TodoBacklog'
-import * as categoriesService from '../../src/services/categories'
-import * as todosService from '../../src/services/todos'
-import type { Category } from '../../src/types/database'
 import {
   sendMessage,
   transcribe,
@@ -70,15 +66,6 @@ export default function PlanScreen() {
   const [plan, setPlan] = useState<ProposedPlan | null>(null)
   const [model, setModel] = useState('gpt-4o-mini')
   const [ttsOn, setTtsOn] = useState(true)
-  const [tab, setTab] = useState<'chat' | 'tasks'>('chat')
-  const [categories, setCategories] = useState<Category[]>([])
-  const [taskInput, setTaskInput] = useState('')
-  const [addingTask, setAddingTask] = useState(false)
-  const todoBacklogRef = useRef<TodoBacklogHandle>(null)
-
-  useEffect(() => {
-    categoriesService.getCategories().then(setCategories).catch(() => {})
-  }, [])
 
   const recorder = useAudioRecorder(SPEECH_RECORDING)
   const recorderState = useAudioRecorderState(recorder)
@@ -226,23 +213,6 @@ export default function PlanScreen() {
     }
   }, [plan, applying, date, model, router])
 
-  // Tasks tab's own input bar (mirrors the chat input, but just adds a task —
-  // details like priority/repeat/category are optional, set later in the editor).
-  const addTask = useCallback(async () => {
-    const title = taskInput.trim()
-    if (!title || addingTask) return
-    setAddingTask(true)
-    try {
-      await todosService.createTodo({ title })
-      setTaskInput('')
-      todoBacklogRef.current?.reload()
-    } catch (e) {
-      Alert.alert('Task', e instanceof Error ? e.message : 'Could not add task')
-    } finally {
-      setAddingTask(false)
-    }
-  }, [taskInput, addingTask])
-
   // Changing the day starts a fresh planning session — otherwise a plan proposed
   // for one date could be Applied to another.
   const shiftDate = useCallback((delta: number) => {
@@ -288,71 +258,14 @@ export default function PlanScreen() {
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Header: big Plan / Tasks segmented control + TTS switch */}
+      {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={[styles.segmented, { backgroundColor: colors.surface3 }]}>
-          {(['chat', 'tasks'] as const).map((t) => (
-            <Pressable
-              key={t}
-              onPress={() => setTab(t)}
-              style={[styles.segment, tab === t && [styles.segmentActive, { backgroundColor: colors.surface1 }]]}
-            >
-              <Text style={[styles.segmentTxt, { color: tab === t ? colors.text1 : colors.text3 }]}>
-                {t === 'chat' ? 'Plan' : 'Tasks'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <Text style={[styles.title, { color: colors.text1 }]}>Agent</Text>
         <Pressable onPress={() => setTtsOn((v) => !v)} hitSlop={10} style={styles.iconBtn}>
           <SpeakerIcon color={ttsOn ? colors.text1 : colors.text4} on={ttsOn} />
         </Pressable>
       </View>
 
-      {tab === 'tasks' ? (
-      <>
-      {/* Task list — the same "chat window" area as Plan, showing tasks instead of messages */}
-      <TodoBacklog
-        ref={todoBacklogRef}
-        colors={colors}
-        categories={categories}
-        planDate={date}
-        onPlanChanged={emitTimerChange}
-      />
-
-      {/* Date selector: below the list, just the date — same spot as Plan's */}
-      <View style={[styles.dateBar, { borderBottomWidth: 0, borderTopWidth: 1, borderTopColor: colors.border }]}>
-        <Pressable onPress={() => shiftDate(-1)} hitSlop={10} style={styles.dateArrow}>
-          <Text style={[styles.arrow, { color: colors.text2 }]}>‹</Text>
-        </Pressable>
-        <Text style={[styles.dateLabel, { color: colors.text1 }]}>{fmtDate(date)}</Text>
-        <Pressable onPress={() => shiftDate(1)} hitSlop={10} style={styles.dateArrow}>
-          <Text style={[styles.arrow, { color: colors.text2 }]}>›</Text>
-        </Pressable>
-      </View>
-
-      {/* Input bar: adds a task instead of messaging the planner */}
-      <View style={[styles.inputBar, { borderTopColor: colors.border, backgroundColor: colors.bg }]}>
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.surface1, color: colors.text1, borderColor: colors.border }]}
-          placeholder="Add a task…"
-          placeholderTextColor={colors.text4}
-          value={taskInput}
-          onChangeText={setTaskInput}
-          editable={!addingTask}
-          onSubmitEditing={addTask}
-          returnKeyType="done"
-        />
-        <Pressable
-          onPress={addTask}
-          disabled={addingTask || !taskInput.trim()}
-          style={[styles.circleBtn, { backgroundColor: ACCENT, opacity: addingTask || !taskInput.trim() ? 0.4 : 1 }]}
-        >
-          {addingTask ? <ActivityIndicator color="#fff" /> : <Text style={styles.plusTxt}>+</Text>}
-        </Pressable>
-      </View>
-      </>
-      ) : (
-      <>
       {headerSub && <Text style={[styles.sub, { color: colors.text3, paddingHorizontal: 20, paddingTop: 10 }]}>{headerSub}</Text>}
       {/* Chat */}
       <ScrollView
@@ -493,8 +406,6 @@ export default function PlanScreen() {
           </Pressable>
         )}
       </View>
-      </>
-      )}
     </KeyboardAvoidingView>
   )
 }
@@ -538,12 +449,9 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
   },
+  title: { fontSize: 26, fontWeight: '700', fontFamily: fonts.displayBold, letterSpacing: -0.5, flex: 1 },
   sub: { fontSize: 13, fontFamily: fonts.ui, marginTop: 2 },
   iconBtn: { padding: 6 },
-  segmented: { flex: 1, flexDirection: 'row', borderRadius: 12, padding: 3, marginRight: 12 },
-  segment: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 9 },
-  segmentActive: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
-  segmentTxt: { fontSize: 17, fontFamily: fonts.displaySemiBold, fontWeight: '700', letterSpacing: -0.2 },
   dateBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -608,5 +516,4 @@ const styles = StyleSheet.create({
     fontFamily: fonts.ui,
   },
   circleBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  plusTxt: { color: '#fff', fontSize: 26, fontWeight: '300', lineHeight: 28 },
 })

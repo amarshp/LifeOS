@@ -16,7 +16,6 @@ export interface Settings {
   weekStartsOn: WeekStart
   snapDragTo: SnapDragTo
   quickStartCount: QuickStartCount
-  showWeekTab: boolean
   hideSleep: boolean
   sleepStart: number  // 0–23, hour when sleep begins (default 23 = 11 PM)
   sleepEnd: number    // 0–23, hour when sleep ends / day view starts (default 7 = 7 AM)
@@ -31,7 +30,6 @@ interface SettingsContextValue extends Settings {
   setWeekStartsOn: (v: WeekStart) => void
   setSnapDragTo: (v: SnapDragTo) => void
   setQuickStartCount: (v: QuickStartCount) => void
-  setShowWeekTab: (v: boolean) => void
   setHideSleep: (v: boolean) => void
   setSleepStart: (v: number) => void
   setSleepEnd: (v: number) => void
@@ -45,7 +43,6 @@ const defaults: Settings = {
   weekStartsOn: 'Monday',
   snapDragTo: 5,
   quickStartCount: 4,
-  showWeekTab: true,
   hideSleep: false,
   sleepStart: 23,
   sleepEnd: 7,
@@ -61,7 +58,6 @@ const SettingsContext = createContext<SettingsContextValue>({
   setWeekStartsOn: () => {},
   setSnapDragTo: () => {},
   setQuickStartCount: () => {},
-  setShowWeekTab: () => {},
   setHideSleep: () => {},
   setSleepStart: () => {},
   setSleepEnd: () => {},
@@ -77,7 +73,6 @@ function normalizeSettings(raw: unknown): Settings {
   if (!['Monday', 'Sunday'].includes(next.weekStartsOn)) next.weekStartsOn = defaults.weekStartsOn
   if (![5, 10, 15, 30].includes(next.snapDragTo)) next.snapDragTo = defaults.snapDragTo
   if (![0, 2, 3, 4, 5].includes(next.quickStartCount)) next.quickStartCount = defaults.quickStartCount
-  if (typeof next.showWeekTab !== 'boolean') next.showWeekTab = defaults.showWeekTab
   if (typeof next.hideSleep !== 'boolean') next.hideSleep = defaults.hideSleep
   if (typeof next.sleepStart !== 'number' || next.sleepStart < 0 || next.sleepStart > 23) next.sleepStart = defaults.sleepStart
   if (typeof next.sleepEnd !== 'number' || next.sleepEnd < 0 || next.sleepEnd > 23) next.sleepEnd = defaults.sleepEnd
@@ -125,7 +120,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     setWeekStartsOn: (v) => persist({ weekStartsOn: v }),
     setSnapDragTo: (v) => persist({ snapDragTo: v }),
     setQuickStartCount: (v) => persist({ quickStartCount: v }),
-    setShowWeekTab: (v) => persist({ showWeekTab: v }),
     setHideSleep: (v) => persist({ hideSleep: v }),
     setSleepStart: (v) => persist({ sleepStart: v }),
     setSleepEnd: (v) => persist({ sleepEnd: v }),

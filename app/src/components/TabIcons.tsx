@@ -45,11 +45,11 @@ export function DayIcon({ color, size = 20 }: IconProps) {
   )
 }
 
-export function WeekIcon({ color, size = 20 }: IconProps) {
+export function TasksIcon({ color, size = 20 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
-      <Rect x={3} y={4} width={14} height={13} rx={2} stroke={color} strokeWidth={1.6} />
-      <Path d="M3 8h14M7 4v13M13 4v13" stroke={color} strokeWidth={1.6} />
+      <Path d="M5 5.5l1.3 1.3L8.5 4.5M5 11l1.3 1.3L8.5 10M5 16.5l1.3 1.3 2.2-2.3" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M11 5.5h6M11 11h6M11 16.5h6" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
     </Svg>
   )
 }

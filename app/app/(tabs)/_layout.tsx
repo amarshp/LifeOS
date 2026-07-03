@@ -2,7 +2,7 @@ import { View, Text, Pressable, StyleSheet, Animated, Alert, AppState } from 're
 import { Tabs, useFocusEffect, useRouter, usePathname } from 'expo-router'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { colors, fonts } from '../../src/theme/tokens'
-import { HomeIcon, DayIcon, WeekIcon, InsightsIcon, SettingsIcon, NumberIcon, PlanIcon } from '../../src/components/TabIcons'
+import { HomeIcon, DayIcon, TasksIcon, InsightsIcon, SettingsIcon, NumberIcon, PlanIcon } from '../../src/components/TabIcons'
 import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
@@ -24,7 +24,7 @@ const BLOOD_RED = '#C8102E'
 export default function TabLayout() {
   const timer = useTimer()
   const router = useRouter()
-  const { colors, showWeekTab } = useSettings()
+  const { colors } = useSettings()
   const [categories, setCategories] = useState<Category[]>([])
   const [nextPlanned, setNextPlanned] = useState<NextPlanned | null>(null)
   const [stoppingEntryId, setStoppingEntryId] = useState<string | null>(null)
@@ -233,23 +233,22 @@ export default function TabLayout() {
         <Tabs.Screen
           name="day"
           options={{
-            title: 'Day',
+            title: 'Timeline',
             tabBarIcon: ({ color }) => <DayIcon color={color as string} size={22} />,
           }}
         />
         <Tabs.Screen
           name="plan"
           options={{
-            title: 'Plan',
+            title: 'Agent',
             tabBarIcon: ({ color }) => <PlanIcon color={color as string} size={22} />,
           }}
         />
         <Tabs.Screen
-          name="week"
+          name="tasks"
           options={{
-            title: 'Week',
-            tabBarIcon: ({ color }) => <WeekIcon color={color as string} size={22} />,
-            href: showWeekTab ? undefined : null,
+            title: 'Tasks',
+            tabBarIcon: ({ color }) => <TasksIcon color={color as string} size={22} />,
           }}
         />
         <Tabs.Screen
