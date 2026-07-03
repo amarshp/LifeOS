@@ -3,6 +3,7 @@ import type { Category, TimeEntry, Tag } from '../types/database'
 import * as timeEntries from '../services/time-entries'
 import * as categoriesService from '../services/categories'
 import * as tagsService from '../services/tags'
+import * as userSettingsService from '../services/user-settings'
 import { supabase } from './supabase'
 
 // Bridge for the native Siri "track" intents (LifeOSTrackIntent.swift).
@@ -110,9 +111,13 @@ async function applyCommand(
   categories: Category[],
   tags: Tag[],
   fallbackCatId: string | undefined,
+  allowParallel: boolean,
 ): Promise<void> {
   const at = new Date(cmd.at).toISOString()
-  const { action, title } = parseTrack(cmd.title)
+  const parsed = parseTrack(cmd.title)
+  // Parallel timers disabled → "parallel X" is just a switch to X.
+  const action = parsed.action === 'parallel' && !allowParallel ? 'start' : parsed.action
+  const title = parsed.title
   const inferred = inferFromTitle(title, categories, tags)
 
   if (action === 'stop') {
@@ -174,6 +179,9 @@ export async function drainTrackQueue(): Promise<DrainResult> {
         tagsService.getAllTags().catch(() => [] as Tag[]),
       ])
     : [[] as Category[], [] as Tag[]]
+  const allowParallel = needLegacy
+    ? await userSettingsService.getUserSettings().then((s) => s.allow_parallel_timers).catch(() => false)
+    : false
   const fallbackCatId = (
     categories.find((c) => ['misc', 'inbox', 'other'].includes(c.name.toLowerCase())) ?? categories[0]
   )?.id
@@ -193,7 +201,7 @@ export async function drainTrackQueue(): Promise<DrainResult> {
       } else {
         // Legacy path (older native build): parse + match + write in JS.
         const running = await timeEntries.getRunningTimers()
-        await applyCommand(cmd, running, categories, tags, fallbackCatId)
+        await applyCommand(cmd, running, categories, tags, fallbackCatId, allowParallel)
       }
       applied += 1
     } catch (e) {

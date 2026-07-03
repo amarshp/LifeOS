@@ -3,6 +3,8 @@ import { Appearance } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { darkColors, lightColors } from '../theme/tokens'
 import type { ColorPalette } from '../theme/tokens'
+import { supabase } from '../lib/supabase'
+import * as userSettingsService from '../services/user-settings'
 
 export type ThemeMode = 'Light' | 'Dark' | 'Auto'
 export type WeekStart = 'Monday' | 'Sunday'
@@ -24,6 +26,9 @@ export interface Settings {
 
 interface SettingsContextValue extends Settings {
   colors: ColorPalette
+  // Server-backed (user_settings table — enforced by DB trigger + edge fns)
+  allowParallelTimers: boolean
+  setAllowParallelTimers: (v: boolean) => void
   setTheme: (t: ThemeMode) => void
   setReduceMotion: (v: boolean) => void
   setSoundOnStop: (v: boolean) => void
@@ -52,6 +57,8 @@ const defaults: Settings = {
 const SettingsContext = createContext<SettingsContextValue>({
   ...defaults,
   colors: darkColors,
+  allowParallelTimers: false,
+  setAllowParallelTimers: () => {},
   setTheme: () => {},
   setReduceMotion: () => {},
   setSoundOnStop: () => {},
@@ -83,11 +90,35 @@ function normalizeSettings(raw: unknown): Settings {
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(defaults)
   const [systemScheme, setSystemScheme] = useState(Appearance.getColorScheme())
+  const [allowParallelTimers, setAllowParallelState] = useState(false)
 
   useEffect(() => {
     AsyncStorage.getItem(KEY).then(raw => {
       if (raw) setSettings(normalizeSettings(JSON.parse(raw)))
     }).catch(() => {})
+  }, [])
+
+  // Server-backed settings: load whenever auth state changes (sign-in happens
+  // after the provider mounts, so a mount-only fetch would miss it).
+  useEffect(() => {
+    const load = () => {
+      userSettingsService.getUserSettings()
+        .then(s => setAllowParallelState(s.allow_parallel_timers))
+        .catch(() => {})
+    }
+    load()
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') load()
+      if (event === 'SIGNED_OUT') setAllowParallelState(false)
+    })
+    return () => sub.subscription.unsubscribe()
+  }, [])
+
+  const setAllowParallelTimers = useCallback((v: boolean) => {
+    setAllowParallelState(v) // optimistic — enforcement is server-side anyway
+    userSettingsService.setAllowParallelTimers(v).catch(() => {
+      setAllowParallelState(!v)
+    })
   }, [])
 
   useEffect(() => {
@@ -114,6 +145,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const value: SettingsContextValue = {
     ...settings,
     colors: resolvedColors,
+    allowParallelTimers,
+    setAllowParallelTimers,
     setTheme: (t) => persist({ theme: t }),
     setReduceMotion: (v) => persist({ reduceMotion: v }),
     setSoundOnStop: (v) => persist({ soundOnStop: v }),

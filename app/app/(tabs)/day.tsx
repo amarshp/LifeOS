@@ -1463,7 +1463,7 @@ interface AddEntrySheetProps {
 }
 
 function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runningCount, lastStopTime, viewDate, initialMode, initialLogPastRange, onClose, onStart, onSaveCompleted, onSavePlan, onCategoryCreated }: AddEntrySheetProps) {
-  const { reduceMotion, colors: tc } = useSettings()
+  const { reduceMotion, colors: tc, allowParallelTimers } = useSettings()
   const [mode, setMode] = useState<'timer' | 'past' | 'plan'>('timer')
   const [planRecurrence, setPlanRecurrence] = useState('none')
   const [title, setTitle] = useState('')
@@ -1822,7 +1822,9 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       await tagsService.ensureTagsForCategory(effectiveCat, allTags)
       // Hard cap: never attempt a parallel start when 2 are already running
       // (the DB trigger would reject it). A normal start stops both instead.
-      await onStart(effectiveCat, effectiveTitle, allTags, runningCount >= 2 ? false : parallel, startTime, notes.trim() || null, selectedTodoId)
+      // Parallel starts are also disabled entirely unless the setting is on.
+      const wantParallel = allowParallelTimers && runningCount < 2 && parallel
+      await onStart(effectiveCat, effectiveTitle, allTags, wantParallel, startTime, notes.trim() || null, selectedTodoId)
       setTitle('')
       setTitleIsAuto(true)
       setTags([])
@@ -2126,7 +2128,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
                     </Pressable>
                   )}
                 </View>
-                {runningCount >= 2 ? (
+                {allowParallelTimers && (runningCount >= 2 ? (
                   <Text style={{ color: tc.text4, fontSize: 12.5, fontFamily: fonts.ui, marginTop: 16, lineHeight: 18 }}>
                     Max 2 parallel timers running — starting a new one will stop both.
                   </Text>
@@ -2140,7 +2142,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
                     </View>
                     <Text style={{ color: tc.text2, fontSize: 13, fontFamily: fonts.ui }}>Run alongside current timer</Text>
                   </Pressable>
-                )}
+                ))}
               </>
             )}
     </SheetShell>

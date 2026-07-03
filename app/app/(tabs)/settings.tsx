@@ -387,7 +387,13 @@ export default function SettingsScreen() {
           )}
         </SettingsSection>
 
-        <SettingsSection title="04 - Account">
+        <SettingsSection title="04 - Advanced">
+          <SettingsRow label="Simultaneous timers">
+            <ToggleSwitch on={settings.allowParallelTimers} onToggle={() => settings.setAllowParallelTimers(!settings.allowParallelTimers)} />
+          </SettingsRow>
+        </SettingsSection>
+
+        <SettingsSection title="05 - Account">
           <SettingsRow label="Sync" sub={`On · ${user?.email ?? '—'}`} onPress={handleSyncPress} />
           <SettingsRow label="Export data" sub="CSV · JSON" onPress={() => setActiveSheet('export')} />
           <SettingsRow label="Sign out" destructive onPress={handleSignOut} />
