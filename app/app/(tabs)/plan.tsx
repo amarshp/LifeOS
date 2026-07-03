@@ -28,8 +28,9 @@ import { extractPlanDate } from '../../src/lib/parseDate'
 import { addLocalDays } from '../../src/lib/time-range'
 import { emitTimerChange } from '../../src/lib/timer-events'
 import { SPEECH_RECORDING } from '../../src/lib/speechRecording'
-import { TodoBacklog } from '../../src/components/TodoBacklog'
+import { TodoBacklog, type TodoBacklogHandle } from '../../src/components/TodoBacklog'
 import * as categoriesService from '../../src/services/categories'
+import * as todosService from '../../src/services/todos'
 import type { Category } from '../../src/types/database'
 import {
   sendMessage,
@@ -71,6 +72,9 @@ export default function PlanScreen() {
   const [ttsOn, setTtsOn] = useState(true)
   const [tab, setTab] = useState<'chat' | 'tasks'>('chat')
   const [categories, setCategories] = useState<Category[]>([])
+  const [taskInput, setTaskInput] = useState('')
+  const [addingTask, setAddingTask] = useState(false)
+  const todoBacklogRef = useRef<TodoBacklogHandle>(null)
 
   useEffect(() => {
     categoriesService.getCategories().then(setCategories).catch(() => {})
@@ -222,6 +226,23 @@ export default function PlanScreen() {
     }
   }, [plan, applying, date, model, router])
 
+  // Tasks tab's own input bar (mirrors the chat input, but just adds a task —
+  // details like priority/repeat/category are optional, set later in the editor).
+  const addTask = useCallback(async () => {
+    const title = taskInput.trim()
+    if (!title || addingTask) return
+    setAddingTask(true)
+    try {
+      await todosService.createTodo({ title })
+      setTaskInput('')
+      todoBacklogRef.current?.reload()
+    } catch (e) {
+      Alert.alert('Task', e instanceof Error ? e.message : 'Could not add task')
+    } finally {
+      setAddingTask(false)
+    }
+  }, [taskInput, addingTask])
+
   // Changing the day starts a fresh planning session — otherwise a plan proposed
   // for one date could be Applied to another.
   const shiftDate = useCallback((delta: number) => {
@@ -236,11 +257,14 @@ export default function PlanScreen() {
   const busy = sending || transcribing
   const planItemCount = plan?.items.length ?? 0
 
+  // Only shown while something is actually happening — the empty-state copy
+  // already covers the idle case, so a permanent "Tell me about your day"
+  // line here would just be a redundant, oddly-placed label.
   const headerSub = useMemo(() => {
     if (transcribing) return 'Transcribing…'
     if (sending) return 'Thinking…'
     if (recorderState.isRecording) return 'Listening… release to send'
-    return 'Tell me about your day'
+    return null
   }, [transcribing, sending, recorderState.isRecording])
 
   // One-tap starters. Prompts about the current day flip the target date to
@@ -264,15 +288,18 @@ export default function PlanScreen() {
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Header: Plan / Tasks toggle + TTS switch */}
+      {/* Header: big Plan / Tasks segmented control + TTS switch */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={styles.tabRow}>
+        <View style={[styles.segmented, { backgroundColor: colors.surface3 }]}>
           {(['chat', 'tasks'] as const).map((t) => (
-            <Pressable key={t} onPress={() => setTab(t)} style={styles.tabBtn}>
-              <Text style={[styles.tabTxt, { color: tab === t ? colors.text1 : colors.text4 }]}>
+            <Pressable
+              key={t}
+              onPress={() => setTab(t)}
+              style={[styles.segment, tab === t && [styles.segmentActive, { backgroundColor: colors.surface1 }]]}
+            >
+              <Text style={[styles.segmentTxt, { color: tab === t ? colors.text1 : colors.text3 }]}>
                 {t === 'chat' ? 'Plan' : 'Tasks'}
               </Text>
-              {tab === t && <View style={[styles.tabUnderline, { backgroundColor: ACCENT }]} />}
             </Pressable>
           ))}
         </View>
@@ -283,8 +310,17 @@ export default function PlanScreen() {
 
       {tab === 'tasks' ? (
       <>
-      {/* Date selector: Tasks needs the target date up front — "+ plan" schedules into it */}
-      <View style={[styles.dateBar, { borderBottomColor: colors.border }]}>
+      {/* Task list — the same "chat window" area as Plan, showing tasks instead of messages */}
+      <TodoBacklog
+        ref={todoBacklogRef}
+        colors={colors}
+        categories={categories}
+        planDate={date}
+        onPlanChanged={emitTimerChange}
+      />
+
+      {/* Date selector: below the list, just the date — same spot as Plan's */}
+      <View style={[styles.dateBar, { borderBottomWidth: 0, borderTopWidth: 1, borderTopColor: colors.border }]}>
         <Pressable onPress={() => shiftDate(-1)} hitSlop={10} style={styles.dateArrow}>
           <Text style={[styles.arrow, { color: colors.text2 }]}>‹</Text>
         </Pressable>
@@ -293,16 +329,31 @@ export default function PlanScreen() {
           <Text style={[styles.arrow, { color: colors.text2 }]}>›</Text>
         </Pressable>
       </View>
-      <TodoBacklog
-        colors={colors}
-        categories={categories}
-        planDate={date}
-        onPlanChanged={emitTimerChange}
-      />
+
+      {/* Input bar: adds a task instead of messaging the planner */}
+      <View style={[styles.inputBar, { borderTopColor: colors.border, backgroundColor: colors.bg }]}>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.surface1, color: colors.text1, borderColor: colors.border }]}
+          placeholder="Add a task…"
+          placeholderTextColor={colors.text4}
+          value={taskInput}
+          onChangeText={setTaskInput}
+          editable={!addingTask}
+          onSubmitEditing={addTask}
+          returnKeyType="done"
+        />
+        <Pressable
+          onPress={addTask}
+          disabled={addingTask || !taskInput.trim()}
+          style={[styles.circleBtn, { backgroundColor: ACCENT, opacity: addingTask || !taskInput.trim() ? 0.4 : 1 }]}
+        >
+          {addingTask ? <ActivityIndicator color="#fff" /> : <Text style={styles.plusTxt}>+</Text>}
+        </Pressable>
+      </View>
       </>
       ) : (
       <>
-      <Text style={[styles.sub, { color: colors.text3, paddingHorizontal: 20, paddingTop: 10 }]}>{headerSub}</Text>
+      {headerSub && <Text style={[styles.sub, { color: colors.text3, paddingHorizontal: 20, paddingTop: 10 }]}>{headerSub}</Text>}
       {/* Chat */}
       <ScrollView
         ref={scrollRef}
@@ -489,10 +540,10 @@ const styles = StyleSheet.create({
   },
   sub: { fontSize: 13, fontFamily: fonts.ui, marginTop: 2 },
   iconBtn: { padding: 6 },
-  tabRow: { flex: 1, flexDirection: 'row' },
-  tabBtn: { alignItems: 'center', paddingVertical: 4, paddingHorizontal: 16 },
-  tabTxt: { fontSize: 14, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: 0.2 },
-  tabUnderline: { position: 'absolute', bottom: -1, height: 2, width: 40, borderRadius: 1 },
+  segmented: { flex: 1, flexDirection: 'row', borderRadius: 12, padding: 3, marginRight: 12 },
+  segment: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 9 },
+  segmentActive: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
+  segmentTxt: { fontSize: 17, fontFamily: fonts.displaySemiBold, fontWeight: '700', letterSpacing: -0.2 },
   dateBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -557,4 +608,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.ui,
   },
   circleBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  plusTxt: { color: '#fff', fontSize: 26, fontWeight: '300', lineHeight: 28 },
 })
