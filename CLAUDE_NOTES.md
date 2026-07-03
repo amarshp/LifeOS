@@ -47,6 +47,12 @@ Personal scratch file — observations, decisions, open threads. Not user docs.
 - Date bar dropped its "Planning · " prefix (just the date now) and moved below the chat, right above the input bar. Tasks tab keeps its own date-bar copy at the top of that branch — kept deliberately, since `TodoBacklog`'s "+ plan" needs `planDate` visible/changeable up front; the "move below" ask was specifically about the chat view.
 - Verified visually via the browser rig (screenshots) — clean single-row header on both tabs, no wave button, date bar in the new position.
 
+### Plan/Tasks v2 restyle (2026-07-03, even later)
+- User rejected v1 restyle's small underlined tabs → big pill segmented control instead ("Big [ Plan | Tasks ]"). Also wanted Tasks to fully mirror Plan's chrome (list=chat-window, date below, input bar at bottom for adding a task) rather than keeping its own top quick-add + top date bar — overriding my earlier "date must stay up top for +plan context" reasoning; explicit ask wins.
+- Required lifting TodoBacklog's quick-add UI out to plan.tsx (owns the bottom input bar now) since the date-bar had to sit BETWEEN the list and the input, matching Plan's exact order. TodoBacklog → `forwardRef` + `useImperativeHandle({reload})` so plan.tsx can refresh the list after creating a task via its own input. Verified live: typed task in the new bottom bar → appeared in the list with no manual refresh.
+- Also killed the idle "Tell me about your day" line (user: "out of place") — now only shows during Thinking/Transcribing/Listening, hidden when idle (empty-state copy already covers idle).
+- User's immediate follow-up after this shipped: musing whether "Plan" is the right name given it's really agent-mode (plan + tasks + live time-entry control). Noted, not acted on yet — pure naming/scope question, answered inline, no code change unless they ask.
+
 ### Open threads / later
 - Live streaming transcription (expo-speech-recognition) — needs native rebuild, do with next IPA build.
 - Task dropdown in EDIT sheets (entry/block) — only add sheets have it now.
