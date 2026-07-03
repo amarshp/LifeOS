@@ -12,7 +12,10 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const MODEL = 'gpt-4.1-mini'
+const MODEL = 'gpt-5.1'
+// Reasoning effort for gpt-5.x: 'low' keeps latency inside OPENAI_TIMEOUT_MS
+// while still beating non-reasoning models on multi-step backfill/replan.
+const REASONING_EFFORT = 'low'
 const MAX_TOOL_ROUNDS = 5
 // Fail fast: a stalled upstream call must never ride into Supabase's 150s
 // wall-clock kill (WORKER_RESOURCE_LIMIT) — surface a retryable error instead.
@@ -216,7 +219,7 @@ const TOOLS = [
     function: {
       name: 'start_timer',
       description:
-        `Start a new RUNNING timer for the user's current activity. Optional backdated start. category_id must be a real category id. ${TIME_ARG_NOTE}`,
+        `Start a new RUNNING timer for the user's current activity. Any previously running timer is stopped automatically at the new start time (atomic switch). Optional backdated start. category_id must be a real category id. ${TIME_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: {
@@ -396,6 +399,11 @@ interface ToolCtx {
   userId: string
   allowedCategoryIds: Set<string>
   allowedTodoIds: Set<string> // grows when the agent adds a task mid-conversation
+  // Read-before-write: entry/block mutations only accept ids the model has
+  // actually seen this conversation (from list_* results or its own creates),
+  // so a hallucinated id can never hit someone's real row.
+  allowedEntryIds: Set<string>
+  allowedBlockIds: Set<string>
   actions: string[]
 }
 
@@ -467,6 +475,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .or(`end_time.gte.${dayStart},is_running.eq.true`)
         .order('start_time')
       if (error) return { error: error.message }
+      for (const e of data ?? []) ctx.allowedEntryIds.add(e.id as string)
       return (data ?? []).map((e) => ({
         id: e.id,
         title: e.title,
@@ -480,6 +489,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'stop_timer': {
       const id = str('entry_id')
       if (!id) return { error: 'entry_id required' }
+      if (!ctx.allowedEntryIds.has(id)) return { error: 'unknown entry_id — call list_time_entries first' }
       const end = str('end_time')
         ? localToIso(str('end_date') ?? today, str('end_time')!, tz)
         : new Date().toISOString()
@@ -517,12 +527,38 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       const start = str('start_time')
         ? localToIso(str('start_date') ?? today, str('start_time')!, tz)
         : new Date().toISOString()
+      // Atomic switch: one current activity. Any still-running timer is stopped
+      // at the new timer's start (clean handoff, gap-free timeline). Backfill
+      // flows should still stop stale timers at their TRUE end first — this is
+      // the safety net, not the primary path.
+      const { data: running } = await supabase
+        .from('time_entries')
+        .select('id, title, todo_id, start_time')
+        .eq('is_running', true)
+        .is('deleted_at', null)
+      for (const r of running ?? []) {
+        // Stop at the new timer's start; if that predates the running entry,
+        // fall back to now; a future-dated running entry (bad earlier backfill)
+        // collapses to zero length rather than going negative.
+        const nowIso = new Date().toISOString()
+        const rStart = r.start_time as string
+        const end = start > rStart ? start : nowIso > rStart ? nowIso : rStart
+        const { error: stopErr } = await supabase
+          .from('time_entries')
+          .update({ is_running: false, end_time: end })
+          .eq('id', r.id)
+          .eq('is_running', true)
+        if (stopErr) return { error: `could not stop running "${r.title}": ${stopErr.message}` }
+        ctx.actions.push(`Stopped "${r.title}" at ${isoToLocal(end, tz)} (switched)`)
+        if (r.todo_id) await completeTodoRecord(ctx, r.todo_id as string)
+      }
       const { data, error } = await supabase
         .from('time_entries')
         .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: [], todo_id: todoId ?? null })
         .select('id')
         .single()
       if (error) return { error: error.message }
+      ctx.allowedEntryIds.add(data.id as string)
       ctx.actions.push(`Started "${title}" at ${isoToLocal(start, tz)}`)
       return { ok: true, entry_id: data.id }
     }
@@ -558,6 +594,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .select('id')
         .single()
       if (error) return { error: error.message }
+      ctx.allowedEntryIds.add(data.id as string)
       ctx.actions.push(`Logged "${title}" ${isoToLocal(startIso, tz)} → ${isoToLocal(endIso, tz)}`)
       // Completed period linked to a task → the task is done.
       if (todoId) await completeTodoRecord(ctx, todoId)
@@ -567,6 +604,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'update_time_entry': {
       const id = str('entry_id')
       if (!id) return { error: 'entry_id required' }
+      if (!ctx.allowedEntryIds.has(id)) return { error: 'unknown entry_id — call list_time_entries first' }
       const updates: Record<string, unknown> = {}
       if (str('title')) updates.title = str('title')
       if (str('category_id')) {
@@ -593,6 +631,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'delete_time_entry': {
       const id = str('entry_id')
       if (!id) return { error: 'entry_id required' }
+      if (!ctx.allowedEntryIds.has(id)) return { error: 'unknown entry_id — call list_time_entries first' }
       const { data, error } = await supabase
         .from('time_entries')
         .update({ deleted_at: new Date().toISOString() })
@@ -613,6 +652,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .is('deleted_at', null)
         .order('start_time')
       if (error) return { error: error.message }
+      for (const b of data ?? []) ctx.allowedBlockIds.add(b.id as string)
       return (data ?? []).map((b) => ({
         id: b.id,
         title: b.title,
@@ -651,6 +691,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .select('id')
         .single()
       if (error) return { error: error.message }
+      ctx.allowedBlockIds.add(data.id as string)
       ctx.actions.push(`Added block "${title}" on ${date}`)
       return { ok: true, block_id: data.id }
     }
@@ -658,6 +699,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'update_calendar_block': {
       const id = str('block_id')
       if (!id) return { error: 'block_id required' }
+      if (!ctx.allowedBlockIds.has(id)) return { error: 'unknown block_id — call list_calendar_blocks first' }
       const updates: Record<string, unknown> = {}
       if (str('title')) updates.title = str('title')
       if (str('category_id')) {
@@ -682,6 +724,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'delete_calendar_block': {
       const id = str('block_id')
       if (!id) return { error: 'block_id required' }
+      if (!ctx.allowedBlockIds.has(id)) return { error: 'unknown block_id — call list_calendar_blocks first' }
       const { data, error } = await supabase
         .from('calendar_blocks')
         .update({ deleted_at: new Date().toISOString() })
@@ -836,6 +879,7 @@ HOW TO BEHAVE:
 
 ACTING WITH TOOLS (you are an agent, not just a planner):
 - You can list/stop/start/insert/edit/delete the user's REAL tracked time entries and planned schedule blocks. Use tools whenever the user asks you to change something real — don't just talk about it.
+- SWITCH: when the user says they are NOW doing something different ("taking a coffee break", "starting lunch", "back to office work"), just call start_timer for the new activity — the previous timer is stopped automatically at that instant. Do NOT ask how long it will take, and do NOT call stop_timer first for a simple switch. (For BACKFILL, still stop stale timers at their TRUE historical end before adding entries — the auto-stop uses the new start time, which is wrong for a timer that really ended hours ago.)
 - BACKFILL: when the user recounts what actually happened (e.g. "forgot to track: woke at 8, got ready till 8:30, drove till 9, working since"), first call list_time_entries to see the day (there may be a stale RUNNING timer like Sleep or a very-old running entry from a prior day — check its start_local). Then: stop the stale timer at its true end, add_completed_entry for each missed period, and start_timer for what they're doing NOW. Chain times so periods touch without gaps or overlaps.
 - Each backfilled entry's TITLE must describe that specific activity in the user's words ("Getting ready", "Drive to office") — never reuse the previous activity's title. Pick the closest category for each (commute → Commute, chores/errands/getting ready → Admin or Break); only the sleep period itself goes under Sleep.
 - Tool time args: pass times as "HH:MM" exactly as the user said them. ALWAYS pass explicit start_date/end_date — do not rely on the "defaults to today" omission for any backfilled period once the narrative involves more than a few recent hours; get it wrong and every activity silently lands on the wrong calendar day. Never invent dates — only use TODAY'S DATE, YESTERDAY'S DATE, or a date returned by list_time_entries/list_calendar_blocks.
@@ -944,6 +988,8 @@ Deno.serve(async (req) => {
     userId: userData.user.id,
     allowedCategoryIds: allowedIds,
     allowedTodoIds, // same set instance — add_todo grows it, so the final plan filter accepts new tasks
+    allowedEntryIds: new Set<string>(),
+    allowedBlockIds: new Set<string>(),
     actions: [],
   }
 
@@ -964,8 +1010,10 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({
           model: MODEL,
-          temperature: 0.1,
-          max_completion_tokens: 2000,
+          // gpt-5.x: temperature is not supported when reasoning is enabled;
+          // reasoning tokens share the completion budget, so it is raised.
+          reasoning_effort: REASONING_EFFORT,
+          max_completion_tokens: 4000,
           messages: convo,
           ...(lastRound ? {} : { tools: TOOLS }),
           response_format: {
