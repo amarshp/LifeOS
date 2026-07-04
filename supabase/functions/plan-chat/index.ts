@@ -380,6 +380,44 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_reminders',
+      description: "List the user's upcoming one-off reminders (with ids, for cancelling).",
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_reminder',
+      description:
+        `Schedule a one-off phone notification at an exact moment ("remind me to call mom at 5"). NOT for backlog tasks (add_todo) or schedule blocks (add_calendar_block) — only for a ping at a time. ${TIME_ARG_NOTE}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          fire_date: { type: 'string', description: 'Local date YYYY-MM-DD. Defaults to today.' },
+          fire_time: { type: 'string', description: 'Local 24h "HH:MM". Required.' },
+          body: { type: 'string', description: 'Optional extra line shown under the title.' },
+        },
+        required: ['title', 'fire_time'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancel_reminder',
+      description: 'Cancel an upcoming reminder the user no longer wants.',
+      parameters: {
+        type: 'object',
+        properties: { reminder_id: { type: 'string' } },
+        required: ['reminder_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'complete_todo',
       description:
         'Mark a backlog task done (the user says they did it). Recurring tasks roll forward to their next occurrence automatically.',
@@ -404,6 +442,7 @@ interface ToolCtx {
   // so a hallucinated id can never hit someone's real row.
   allowedEntryIds: Set<string>
   allowedBlockIds: Set<string>
+  allowedReminderIds: Set<string>
   allowParallel: boolean // user_settings.allow_parallel_timers (default false)
   actions: string[]
 }
@@ -806,6 +845,66 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       return await completeTodoRecord(ctx, id)
     }
 
+    case 'list_reminders': {
+      const { data, error } = await supabase
+        .from('scheduled_notifications')
+        .select('id, fire_at, title, body')
+        .eq('status', 'pending')
+        .gte('fire_at', new Date().toISOString())
+        .order('fire_at')
+      if (error) return { error: error.message }
+      for (const r of data ?? []) ctx.allowedReminderIds.add(r.id as string)
+      return (data ?? []).map((r) => ({
+        reminder_id: r.id,
+        fire_local: isoToLocal(r.fire_at, tz),
+        title: r.title,
+        body: r.body,
+      }))
+    }
+
+    case 'add_reminder': {
+      const title = str('title')
+      const time = str('fire_time')
+      if (!title || !time) return { error: 'title and fire_time required' }
+      if (!/^\d{1,2}:\d{2}$/.test(time)) return { error: 'fire_time must be "HH:MM" 24h' }
+      const fireIso = localToIso(str('fire_date') ?? today, time, tz)
+      if (fireIso <= new Date().toISOString()) return { error: 'reminder time is in the past' }
+      // Idempotency: identical pending reminder → no duplicate.
+      const { data: dup } = await supabase
+        .from('scheduled_notifications')
+        .select('id')
+        .eq('status', 'pending')
+        .eq('title', title)
+        .eq('fire_at', fireIso)
+        .limit(1)
+      if (dup && dup.length > 0) return { ok: true, reminder_id: dup[0].id, note: 'already scheduled' }
+      const { data, error } = await supabase
+        .from('scheduled_notifications')
+        .insert({ user_id: ctx.userId, source: 'agent', fire_at: fireIso, title, body: str('body') ?? null })
+        .select('id')
+        .single()
+      if (error) return { error: error.message }
+      ctx.allowedReminderIds.add(data.id as string)
+      ctx.actions.push(`Reminder "${title}" set for ${isoToLocal(fireIso, tz)}`)
+      return { ok: true, reminder_id: data.id }
+    }
+
+    case 'cancel_reminder': {
+      const id = str('reminder_id')
+      if (!id) return { error: 'reminder_id required' }
+      if (!ctx.allowedReminderIds.has(id)) return { error: 'unknown reminder_id — call list_reminders first' }
+      const { data, error } = await supabase
+        .from('scheduled_notifications')
+        .update({ status: 'cancelled' })
+        .eq('id', id)
+        .eq('status', 'pending')
+        .select('id, title')
+        .single()
+      if (error) return { error: error.message }
+      ctx.actions.push(`Cancelled reminder "${data.title}"`)
+      return { ok: true }
+    }
+
     default:
       return { error: `unknown tool ${name}` }
   }
@@ -899,6 +998,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - If the LAST recounted activity runs "to now" / "since then" and the user hasn't said it ended, do NOT add_completed_entry for it — instead start_timer with its backdated start_time so it is still running. One continuous entry, not a completed piece plus a new timer.
 - Quick schedule edits ("push my call to 3", "add dentist at 4") → use the calendar block tools on the right date.
 - TASKS: you manage the user's backlog too. When they mention something they need to do without a fixed time ("remind me to renew my license", "I should call the plumber sometime") → add_todo. When they say they finished a task → complete_todo (plus log the time if they said when). Linking work to tasks: pass todo_id on start_timer / add_completed_entry / add_calendar_block when the activity IS one of the backlog tasks — stopping a linked timer or logging a linked period completes the task automatically.
+- REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.
 - Building or reworking the WHOLE day's plan → use the "plan" field of your reply (the user taps Apply), NOT add_calendar_block calls.
 - REPLAN FROM NOW: when the target day is today and the user asks to redo/replan the rest of the day, first look at reality (list_time_entries + list_calendar_blocks), then propose a plan that starts AT OR AFTER the current time — never re-emit items for hours that already passed. Apply only replaces planned blocks from now onward; the morning that already happened stays.
 - After acting, your reply must state plainly what you changed.
@@ -995,6 +1095,7 @@ Deno.serve(async (req) => {
     allowedTodoIds, // same set instance — add_todo grows it, so the final plan filter accepts new tasks
     allowedEntryIds: new Set<string>(),
     allowedBlockIds: new Set<string>(),
+    allowedReminderIds: new Set<string>(),
     allowParallel: settingsRow?.allow_parallel_timers === true,
     actions: [],
   }

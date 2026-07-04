@@ -10,6 +10,7 @@ import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
 import { reconcileRunawayNotifications } from '../../src/lib/runawayNotify'
+import { reconcileNotifications } from '../../src/lib/notifications'
 import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
 import { ensureVoiceCredential } from '../../src/lib/voiceCredential'
 import { registerPushToStartToken } from '../../src/lib/pushToStartToken'
@@ -72,6 +73,8 @@ export default function TabLayout() {
     void ensureVoiceCredential().then(() => registerPushToStartToken())
     // Apply any Siri "track" commands captured while locked (fallback path).
     void drainAndReport()
+    // Refresh the rolling window of local reminders (plan/task/ritual/agent).
+    void reconcileNotifications().catch(() => {})
     timer.refresh()
   }, [timer.refresh, drainAndReport]))
 
@@ -92,6 +95,7 @@ export default function TabLayout() {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void drainAndReport()
+        void reconcileNotifications().catch(() => {})
         // A Siri/Shortcut entry may have changed the DB directly (Edge Function
         // path, no local queue) — always reload running state + dependent views
         // so the banner/Day/Insights reflect it immediately on foreground.

@@ -83,6 +83,23 @@ export default function Test3Screen() {
 
   return (
     <View style={[styles.safe, { backgroundColor: tc.bg }]}>
+      {/* Notification queue — quiet bell */}
+      <Pressable
+        onPress={() => router.push('/notifications')}
+        style={styles.bell}
+        hitSlop={12}
+      >
+        <Svg width={18} height={18} viewBox="0 0 16 16" fill="none">
+          <Path
+            d="M8 2.2c-2.3 0-3.7 1.7-3.7 3.9v2.3L3 10.7v.8h10v-.8l-1.3-2.3V6.1c0-2.2-1.4-3.9-3.7-3.9Z"
+            stroke={tc.text4}
+            strokeWidth={1.3}
+            strokeLinejoin="round"
+          />
+          <Path d="M6.6 13.2a1.5 1.5 0 0 0 2.8 0" stroke={tc.text4} strokeWidth={1.3} strokeLinecap="round" />
+        </Svg>
+      </Pressable>
+
       {/* Settings — off the tab bar, behind a quiet gear */}
       <Pressable
         onPress={() => router.push('/(tabs)/settings')}
@@ -316,6 +333,7 @@ const styles = StyleSheet.create({
   nextText: { fontSize: 13.5, letterSpacing: 0.3, fontFamily: fonts.ui },
 
   gear: { position: 'absolute', top: 16, right: 20, zIndex: 10, padding: 4 },
+  bell: { position: 'absolute', top: 16, left: 20, zIndex: 10, padding: 4 },
   stateCard: {
     alignSelf: 'stretch',
     flexDirection: 'row',

@@ -25,8 +25,11 @@ import {
   type WeekStart,
 } from '../../src/contexts/SettingsContext'
 import { supabase } from '../../src/lib/supabase'
+import { reconcileNotifications } from '../../src/lib/notifications'
 import * as categoriesService from '../../src/services/categories'
 import * as tagsService from '../../src/services/tags'
+import * as userSettingsService from '../../src/services/user-settings'
+import type { NotificationPrefs } from '../../src/services/user-settings'
 import type { CalendarBlock, Category, CategoryKind, CategoryUpdate, Tag, TimeEntry, WeeklyTemplateBlock } from '../../src/types/database'
 
 const CATEGORY_PALETTE = [
@@ -85,6 +88,27 @@ interface ExportSnapshot {
 function showError(err: unknown, fallback: string) {
   const msg = err instanceof Error ? err.message : fallback
   Alert.alert('Error', msg)
+}
+
+// Notification lead-time presets — tapping a row cycles to the next one.
+const PLAN_OFFSET_PRESETS: number[][] = [[5], [10], [15], [15, 5], [30, 10], [60, 15]]
+const TASK_OFFSET_PRESETS: number[][] = [[15], [30], [60], [120], [1440]]
+const RITUAL_PRESETS: (string | null)[] = [null, '20:30', '21:00', '21:30', '22:00']
+const QUIET_PRESETS: Array<[number, number] | null> = [null, [22, 7], [23, 8], [0, 8]]
+
+function fmtOffsets(mins: number[]): string {
+  return mins.map(m => (m >= 1440 ? `${Math.round(m / 1440)}d` : m >= 60 ? `${Math.round(m / 60)}h` : `${m}m`)).join(' + ') + ' before'
+}
+
+function fmtQuiet(start: number | null, end: number | null): string {
+  if (start === null || end === null) return 'Off'
+  const f = (h: number) => `${String(h).padStart(2, '0')}:00`
+  return `${f(start)} – ${f(end)}`
+}
+
+function nextPreset<T>(presets: T[], current: T): T {
+  const idx = presets.findIndex(p => JSON.stringify(p) === JSON.stringify(current))
+  return presets[(idx + 1) % presets.length]
 }
 
 function ToggleSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -231,6 +255,7 @@ export default function SettingsScreen() {
   const [activeSheet, setActiveSheet] = useState<SheetName>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [tags, setTags] = useState<Tag[]>([])
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs | null>(null)
 
   const loadData = useCallback(async () => {
     const [cats, allTags] = await Promise.all([
@@ -239,6 +264,15 @@ export default function SettingsScreen() {
     ])
     setCategories(cats)
     setTags(allTags)
+    userSettingsService.getUserSettings().then(setNotifPrefs).catch(() => {})
+  }, [])
+
+  // Save a notification pref, then rebuild the local schedule to match.
+  const patchNotifPrefs = useCallback((patch: Partial<NotificationPrefs>) => {
+    setNotifPrefs(prev => (prev ? { ...prev, ...patch } : prev))
+    userSettingsService.updateNotificationPrefs(patch)
+      .then(() => reconcileNotifications())
+      .catch(err => showError(err, 'Could not save notification settings'))
   }, [])
 
   useFocusEffect(useCallback(() => {
@@ -387,13 +421,55 @@ export default function SettingsScreen() {
           )}
         </SettingsSection>
 
-        <SettingsSection title="04 - Advanced">
+        {notifPrefs && (
+          <SettingsSection title="04 - Notifications">
+            <SettingsRow label="Plan reminders">
+              <ToggleSwitch on={notifPrefs.notif_plan_enabled} onToggle={() => patchNotifPrefs({ notif_plan_enabled: !notifPrefs.notif_plan_enabled })} />
+            </SettingsRow>
+            {notifPrefs.notif_plan_enabled && (
+              <SettingsRow
+                label="Plan lead time"
+                sub={fmtOffsets(notifPrefs.notif_plan_offsets_min)}
+                onPress={() => patchNotifPrefs({ notif_plan_offsets_min: nextPreset(PLAN_OFFSET_PRESETS, notifPrefs.notif_plan_offsets_min) })}
+              />
+            )}
+            <SettingsRow label="Task reminders">
+              <ToggleSwitch on={notifPrefs.notif_task_enabled} onToggle={() => patchNotifPrefs({ notif_task_enabled: !notifPrefs.notif_task_enabled })} />
+            </SettingsRow>
+            {notifPrefs.notif_task_enabled && (
+              <SettingsRow
+                label="Task lead time"
+                sub={fmtOffsets(notifPrefs.notif_task_offsets_min)}
+                onPress={() => patchNotifPrefs({ notif_task_offsets_min: nextPreset(TASK_OFFSET_PRESETS, notifPrefs.notif_task_offsets_min) })}
+              />
+            )}
+            <SettingsRow
+              label="Plan-tomorrow nudge"
+              sub={notifPrefs.notif_plan_tomorrow_hhmm ?? 'Off'}
+              onPress={() => patchNotifPrefs({ notif_plan_tomorrow_hhmm: nextPreset(RITUAL_PRESETS, notifPrefs.notif_plan_tomorrow_hhmm) })}
+            />
+            <SettingsRow
+              label="Quiet hours"
+              sub={fmtQuiet(notifPrefs.quiet_hours_start, notifPrefs.quiet_hours_end)}
+              onPress={() => {
+                const current: [number, number] | null =
+                  notifPrefs.quiet_hours_start !== null && notifPrefs.quiet_hours_end !== null
+                    ? [notifPrefs.quiet_hours_start, notifPrefs.quiet_hours_end]
+                    : null
+                const next = nextPreset(QUIET_PRESETS, current)
+                patchNotifPrefs({ quiet_hours_start: next?.[0] ?? null, quiet_hours_end: next?.[1] ?? null })
+              }}
+            />
+          </SettingsSection>
+        )}
+
+        <SettingsSection title="05 - Advanced">
           <SettingsRow label="Simultaneous timers">
             <ToggleSwitch on={settings.allowParallelTimers} onToggle={() => settings.setAllowParallelTimers(!settings.allowParallelTimers)} />
           </SettingsRow>
         </SettingsSection>
 
-        <SettingsSection title="05 - Account">
+        <SettingsSection title="06 - Account">
           <SettingsRow label="Sync" sub={`On · ${user?.email ?? '—'}`} onPress={handleSyncPress} />
           <SettingsRow label="Export data" sub="CSV · JSON" onPress={() => setActiveSheet('export')} />
           <SettingsRow label="Sign out" destructive onPress={handleSignOut} />
