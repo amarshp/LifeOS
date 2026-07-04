@@ -327,6 +327,9 @@ export default function PlanScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text1 }]}>Agent</Text>
+        <Pressable onPress={() => router.push('/memories')} hitSlop={10} style={styles.iconBtn}>
+          <MemoryIcon color={colors.text4} />
+        </Pressable>
         <Pressable onPress={() => setTtsOn((v) => !v)} hitSlop={10} style={styles.iconBtn}>
           <SpeakerIcon color={ttsOn ? colors.text1 : colors.text4} on={ttsOn} />
         </Pressable>
@@ -355,6 +358,7 @@ export default function PlanScreen() {
                 { label: 'Plan my day', text: 'Plan my day.', today: false },
                 { label: 'Replan from now', text: 'Replan the rest of my day from now — keep what already happened.', today: true },
                 { label: "What's left today?", text: "What's left on my plan and tasks today?", today: true },
+                { label: 'Evening review', text: "Let's review my day — summarize what happened and ask me your questions.", today: true },
               ] as const).map((p) => (
                 <Pressable
                   key={p.label}
@@ -493,6 +497,15 @@ export default function PlanScreen() {
         )}
       </View>
     </KeyboardAvoidingView>
+  )
+}
+
+function MemoryIcon({ color }: { color: string }) {
+  // A quiet bookmark — the agent's kept facts.
+  return (
+    <Svg width={19} height={19} viewBox="0 0 24 24" fill="none">
+      <Path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1Z" stroke={color} strokeWidth={1.7} strokeLinejoin="round" />
+    </Svg>
   )
 }
 

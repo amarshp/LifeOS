@@ -391,6 +391,51 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'save_memory',
+      description:
+        'Save a durable fact about the user (profile fact, routine, preference). ONLY when the user explicitly tells you to remember something, or explicitly confirms your "should I remember this?" question — never silently.',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'The fact, in one plain sentence.' },
+          kind: { type: 'string', enum: ['profile', 'routine', 'preference', 'fact'], description: 'Default fact.' },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'forget_memory',
+      description: 'Delete a saved memory the user says is wrong or should be forgotten. Use the memory id from MEMORIES.',
+      parameters: {
+        type: 'object',
+        properties: { memory_id: { type: 'string' } },
+        required: ['memory_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_journal',
+      description:
+        "Save (or update) the day's journal entry after an evening review: a factual summary of the tracked day plus the user's answers. One entry per day.",
+      parameters: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: 'Local date YYYY-MM-DD. Defaults to today.' },
+          summary: { type: 'string', description: 'Short factual summary of what actually happened (from the timeline).' },
+          answers: { type: 'string', description: 'JSON object of question → user answer from the review, if any.' },
+        },
+        required: ['summary'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_reminders',
       description: "List the user's upcoming one-off reminders (with ids, for cancelling).",
       parameters: { type: 'object', properties: {}, required: [] },
@@ -454,6 +499,7 @@ interface ToolCtx {
   allowedEntryIds: Set<string>
   allowedBlockIds: Set<string>
   allowedReminderIds: Set<string>
+  allowedMemoryIds: Set<string>
   allowParallel: boolean // user_settings.allow_parallel_timers (default false)
   actions: string[]
 }
@@ -860,6 +906,66 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       return await completeTodoRecord(ctx, id)
     }
 
+    case 'save_memory': {
+      const content = str('content')
+      if (!content) return { error: 'content required' }
+      const kind = ['profile', 'routine', 'preference', 'fact'].includes(str('kind') ?? '') ? str('kind')! : 'fact'
+      // Idempotency: identical live memory → refresh confirmation instead.
+      const { data: dup } = await supabase
+        .from('agent_memories')
+        .select('id')
+        .eq('content', content)
+        .is('deleted_at', null)
+        .limit(1)
+      if (dup && dup.length > 0) {
+        await supabase.from('agent_memories').update({ last_confirmed_at: new Date().toISOString() }).eq('id', dup[0].id)
+        return { ok: true, memory_id: dup[0].id, note: 'already remembered — confirmation refreshed' }
+      }
+      const { data, error } = await supabase
+        .from('agent_memories')
+        .insert({ user_id: ctx.userId, content, kind, source: 'agent' })
+        .select('id')
+        .single()
+      if (error) return { error: error.message }
+      ctx.actions.push(`Remembered: ${content}`)
+      return { ok: true, memory_id: data.id }
+    }
+
+    case 'forget_memory': {
+      const id = str('memory_id')
+      if (!id) return { error: 'memory_id required' }
+      if (!ctx.allowedMemoryIds.has(id)) return { error: 'unknown memory_id — only ids listed in MEMORIES' }
+      const { data, error } = await supabase
+        .from('agent_memories')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('content')
+        .single()
+      if (error) return { error: error.message }
+      ctx.actions.push(`Forgot: ${data.content}`)
+      return { ok: true }
+    }
+
+    case 'save_journal': {
+      const summary = str('summary')
+      if (!summary) return { error: 'summary required' }
+      const date = str('date') ?? today
+      let answers: unknown = null
+      const rawAnswers = rawStr('answers')
+      if (rawAnswers) {
+        try { answers = JSON.parse(rawAnswers) } catch { answers = { note: rawAnswers } }
+      }
+      const { error } = await supabase
+        .from('journal_entries')
+        .upsert(
+          { user_id: ctx.userId, date, summary, answers, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,date' },
+        )
+      if (error) return { error: error.message }
+      ctx.actions.push(`Journal saved for ${date}`)
+      return { ok: true }
+    }
+
     case 'list_reminders': {
       const { data, error } = await supabase
         .from('scheduled_notifications')
@@ -1008,6 +1114,8 @@ function buildSystemPrompt(
   todos: BacklogTodo[],
   expectedSleepHours: number,
   evidenceSnapshot: string,
+  memories: Array<{ id: string; kind: string; content: string; pinned: boolean }>,
+  yesterdayJournal: string | null,
 ): string {
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const catLines = categories.length
@@ -1055,6 +1163,23 @@ ${todoLines}
 
 EVIDENCE SNAPSHOT (deterministic, computed from the user's real tracked data — interpret it, never contradict it, and cite the window when you use it, e.g. "over the last 7 days"):
 ${evidenceSnapshot}
+
+MEMORIES (durable facts the user let you keep — use them, don't re-ask; forget_memory removes one by id):
+${memories.length ? memories.map((m) => `- [${m.kind}${m.pinned ? ' · pinned' : ''}] ${m.content} → memory_id: ${m.id}`).join('\n') : '(none yet)'}
+
+YESTERDAY'S JOURNAL:
+${yesterdayJournal ?? '(none)'}
+
+MEMORY RULES:
+- save_memory ONLY when the user explicitly says to remember something, or answers yes to your one-line "Want me to remember that?" — never silently store an inference.
+- When a memory contradicts what the user now says, trust the user, offer to update: forget the old one and save the new one.
+
+EVENING REVIEW (when the user asks to review/journal the day):
+1. list_time_entries for the day and write a 2–3 sentence factual summary.
+2. Point out ONE meaningful deviation from the plan, if any.
+3. Ask at most THREE short adaptive questions (rotate topics — energy 1–5, what caused the biggest deviation, one domain-specific follow-up like workout type; do not ask about every domain every day).
+4. save_journal with the summary and their answers.
+5. Keep it under two minutes of the user's time.
 
 SEMANTICS:
 - Block flexibility: [FIXED] = appointment/meeting — never move or drop it in a plan without asking. [PROTECTED] = sleep/meals/important routines — move only within reason and explicitly call out the compromise. Unmarked = flexible, you may move it in a replan.
@@ -1164,11 +1289,22 @@ Deno.serve(async (req) => {
   const cats = (categories ?? []) as Array<{ id: string; name: string; kind: string }>
   const allowedIds = new Set(cats.map((c) => c.id))
   const allowedTodoIds = new Set(((todos ?? []) as BacklogTodo[]).map((t) => t.id))
-  const evidenceSnapshot = await buildEvidenceSnapshot(
-    supabase,
-    timezone,
-    (id) => cats.find((c) => c.id === id)?.name ?? null,
-  ).catch(() => '(snapshot unavailable)')
+
+  const yesterdayStr = addDaysStr(todayLocal(timezone), -1)
+  const [{ data: memories }, { data: yJournal }, evidenceSnapshot] = await Promise.all([
+    supabase
+      .from('agent_memories')
+      .select('id, kind, content, pinned')
+      .is('deleted_at', null)
+      .order('pinned', { ascending: false })
+      .order('last_confirmed_at', { ascending: false })
+      .limit(40),
+    supabase.from('journal_entries').select('summary, answers').eq('date', yesterdayStr).maybeSingle(),
+    buildEvidenceSnapshot(supabase, timezone, (id) => cats.find((c) => c.id === id)?.name ?? null)
+      .catch(() => '(snapshot unavailable)'),
+  ])
+
+  const memoryRows = (memories ?? []) as Array<{ id: string; kind: string; content: string; pinned: boolean }>
   const system = buildSystemPrompt(
     date,
     timezone,
@@ -1177,6 +1313,8 @@ Deno.serve(async (req) => {
     (todos ?? []) as BacklogTodo[],
     expectedSleepHours,
     evidenceSnapshot,
+    memoryRows,
+    yJournal ? `${yJournal.summary}${yJournal.answers ? ` — answers: ${JSON.stringify(yJournal.answers)}` : ''}` : null,
   )
 
   const ctx: ToolCtx = {
@@ -1189,6 +1327,7 @@ Deno.serve(async (req) => {
     allowedEntryIds: new Set<string>(),
     allowedBlockIds: new Set<string>(),
     allowedReminderIds: new Set<string>(),
+    allowedMemoryIds: new Set<string>(memoryRows.map((m) => m.id)),
     allowParallel: settingsRow?.allow_parallel_timers === true,
     actions: [],
   }

@@ -11,6 +11,7 @@ import * as timeEntriesService from '../../src/services/time-entries'
 import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
 import { reconcileRunawayNotifications } from '../../src/lib/runawayNotify'
 import { reconcileNotifications } from '../../src/lib/notifications'
+import { registerPushToken } from '../../src/lib/pushToken'
 import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
 import { ensureVoiceCredential } from '../../src/lib/voiceCredential'
 import { registerPushToStartToken } from '../../src/lib/pushToStartToken'
@@ -75,6 +76,8 @@ export default function TabLayout() {
     void drainAndReport()
     // Refresh the rolling window of local reminders (plan/task/ritual/agent).
     void reconcileNotifications().catch(() => {})
+    // Remote push transport (delivery for brain/agent when the app is closed).
+    void registerPushToken()
     timer.refresh()
   }, [timer.refresh, drainAndReport]))
 
