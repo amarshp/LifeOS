@@ -78,6 +78,7 @@ Deno.serve(async (req) => {
 
 RULES:
 - Fix the title: correct obvious mis-hearings ("calform berito" → "California Burrito"), expand shorthand, Sentence case, keep it under ~6 words. If it is already clean, return it UNCHANGED.
+- GENERIC TITLE, SPECIFIC TAGS: the title names the ACTIVITY in its most reusable form ("Snack", "Lunch", "Gym", "Watching anime"); the distinguishing details move into tags. "pre gym eggs" → title "Snack", tags ["eggs","pre-gym"]. "leg day workout" → title "Gym", tags ["legs"]. Named places/people may stay in the title when the place IS the activity ("At California Burrito").
 - category_id: choose the best EXISTING category id from the list; null only if nothing fits at all. Travel/driving → a commute-like category; eating out → food; a show/anime → watching/leisure; a known project name (e.g. "LifeOS") → the work/study-like category it belongs to.
 - tags: 0-2 lowercase-kebab specifics worth aggregating later (place name, project name, show name). Reuse EXISTING TAGS when they mean the same thing. No generic tags like "misc".
 - kind (todos only): commitment = promise/deadline involving someone; reminder = tiny date-bound action; someday = parked wish; else flexible.
