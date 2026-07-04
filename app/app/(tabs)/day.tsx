@@ -1029,7 +1029,7 @@ export default function DayScreen() {
       {/* Day · Tasks segmented header (one tab hosts both surfaces) */}
       <DayTasksSwitch
         active="day"
-        onSwitch={() => router.replace('/(tabs)/tasks')}
+        onSwitch={() => router.replace({ pathname: '/(tabs)/tasks', params: { date: dateStr } })}
         colors={tc}
         right={
           <Pressable onPress={() => router.push('/(tabs)/insights')} hitSlop={10}>

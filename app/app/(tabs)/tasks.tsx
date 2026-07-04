@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native'
-import { useRouter } from 'expo-router'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { DayTasksSwitch } from '../../src/components/DayTasksSwitch'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
@@ -23,7 +23,15 @@ function fmtDate(dateStr: string): string {
 export default function TasksScreen() {
   const { colors } = useSettings()
   const router = useRouter()
+  const params = useLocalSearchParams<{ date?: string }>()
   const [date, setDate] = useState<string>(todayStr)
+
+  // The Day segment hands its selected date across on every switch — follow it
+  // so the two surfaces never drift apart (stale route params once sent this
+  // to a random old date).
+  useEffect(() => {
+    if (params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date)) setDate(params.date)
+  }, [params.date])
   const [categories, setCategories] = useState<Category[]>([])
   const [taskInput, setTaskInput] = useState('')
   const [addingTask, setAddingTask] = useState(false)
@@ -57,7 +65,7 @@ export default function TasksScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <DayTasksSwitch
           active="tasks"
-          onSwitch={() => router.replace('/(tabs)/day')}
+          onSwitch={() => router.replace({ pathname: '/(tabs)/day', params: { date, focusTs: String(Date.now()) } })}
           colors={colors}
         />
       </View>
