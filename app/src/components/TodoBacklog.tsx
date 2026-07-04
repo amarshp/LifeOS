@@ -35,8 +35,11 @@ interface Group { key: string; title: string; items: Todo[] }
 
 function groupTodos(todos: Todo[]): Group[] {
   const today = todayStr()
-  const overdue: Todo[] = [], todayG: Todo[] = [], upcoming: Todo[] = [], noDate: Todo[] = []
+  const overdue: Todo[] = [], todayG: Todo[] = [], upcoming: Todo[] = [], noDate: Todo[] = [], someday: Todo[] = []
   for (const t of todos) {
+    // Someday = parked wishes — they get their own quiet shelf at the bottom
+    // instead of competing with real work.
+    if (t.kind === 'someday') { someday.push(t); continue }
     const due = todosService.todoDueDate(t)
     if (!due) noDate.push(t)
     else if (due < today) overdue.push(t)
@@ -48,6 +51,7 @@ function groupTodos(todos: Todo[]): Group[] {
     { key: 'today', title: 'Today', items: todayG },
     { key: 'upcoming', title: 'Upcoming', items: upcoming },
     { key: 'nodate', title: 'No date', items: noDate },
+    { key: 'someday', title: 'Someday', items: someday },
   ].filter((g) => g.items.length > 0)
 }
 
@@ -82,11 +86,17 @@ export const TodoBacklog = forwardRef<TodoBacklogHandle, TodoBacklogProps>(funct
     load()
   }, [load])
 
+  const [planReceipt, setPlanReceipt] = useState<string | null>(null)
+
   const addToPlan = useCallback(async (todo: Todo) => {
     try {
-      await todosService.addTodoToPlan(todo, planDate)
+      const { start, end } = await todosService.addTodoToPlan(todo, planDate)
       setPlannedIds((prev) => new Set(prev).add(todo.id))
       onPlanChanged()
+      // Receipt: say WHERE it landed (the block is adjustable in Day view).
+      const fmt = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+      setPlanReceipt(`“${todo.title}” planned ${fmt(start)}–${fmt(end)} — drag it in Day to adjust`)
+      setTimeout(() => setPlanReceipt(null), 4000)
     } catch (e) {
       Alert.alert('Plan', e instanceof Error ? e.message : 'Could not add to plan')
     }
@@ -122,6 +132,16 @@ export const TodoBacklog = forwardRef<TodoBacklogHandle, TodoBacklogProps>(funct
                     <View style={styles.titleRow}>
                       <View style={[styles.pdot, { backgroundColor: PRIORITY_COLOR[t.priority] }]} />
                       <Text style={[styles.title, { color: tc.text1 }]} numberOfLines={1}>{t.title}</Text>
+                      {t.kind === 'commitment' && (
+                        <View style={[styles.kindBadge, { borderColor: '#C8102E' }]}>
+                          <Text style={[styles.kindBadgeTxt, { color: '#C8102E' }]}>promise</Text>
+                        </View>
+                      )}
+                      {t.kind === 'reminder' && (
+                        <View style={[styles.kindBadge, { borderColor: tc.border3 }]}>
+                          <Text style={[styles.kindBadgeTxt, { color: tc.text3 }]}>reminder</Text>
+                        </View>
+                      )}
                       {t.recurrence !== 'none' && <Text style={[styles.recur, { color: tc.text4 }]}>↻</Text>}
                     </View>
                     {(cat || due || steps.length > 0) && (
@@ -145,6 +165,12 @@ export const TodoBacklog = forwardRef<TodoBacklogHandle, TodoBacklogProps>(funct
           </View>
         ))}
       </ScrollView>
+
+      {planReceipt && (
+        <View style={[styles.receipt, { backgroundColor: tc.surface3, borderColor: tc.border2 }]}>
+          <Text style={[styles.receiptTxt, { color: tc.text2 }]} numberOfLines={2}>{planReceipt}</Text>
+        </View>
+      )}
 
       <TodoEditorSheet
         visible={editorOpen}
@@ -175,4 +201,17 @@ const styles = StyleSheet.create({
   planBtn: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   planTxt: { fontSize: 12.5, fontFamily: fonts.ui, fontWeight: '500' },
   planned: { fontSize: 12.5, fontFamily: fonts.ui, fontWeight: '600' },
+  kindBadge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  kindBadgeTxt: { fontSize: 9.5, letterSpacing: 0.8, textTransform: 'uppercase', fontFamily: fonts.ui, fontWeight: '600' },
+  receipt: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  receiptTxt: { fontSize: 12.5, fontFamily: fonts.ui, lineHeight: 17 },
 })

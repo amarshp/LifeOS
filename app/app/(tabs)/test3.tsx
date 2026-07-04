@@ -39,13 +39,17 @@ export default function Test3Screen() {
   // ── State cards: show at most one calm prompt when something needs repair ──
   const nowMs = now.getTime()
 
-  // Tracking gap: idle + the last completed entry ended a while ago.
+  // Tracking gap — visible while idle AND while tracking: the hole is between
+  // the last completed entry and (the running timer's start | now).
+  const gapEndMs = currentEntry
+    ? Math.min(new Date(currentEntry.start_time).getTime(), nowMs)
+    : nowMs
   const lastEndMs = timelineEntries.reduce((max, e) => {
     if (!e.end_time) return max
     const end = new Date(e.end_time).getTime()
-    return Number.isFinite(end) && end <= nowMs && end > max ? end : max
+    return Number.isFinite(end) && end <= gapEndMs && end > max ? end : max
   }, 0)
-  const gapMs = !currentEntry && lastEndMs > 0 ? nowMs - lastEndMs : 0
+  const gapMs = lastEndMs > 0 ? gapEndMs - lastEndMs : 0
   const showGapCard = gapMs >= GAP_CARD_MIN_MS
 
   // Plan drift: planned time that should already have happened vs tracked time.
@@ -184,7 +188,7 @@ export default function Test3Screen() {
               params: {
                 sheet: 'gap',
                 gapStart: new Date(lastEndMs).toISOString(),
-                gapEnd: new Date(nowMs).toISOString(),
+                gapEnd: new Date(gapEndMs).toISOString(),
                 focusTs: String(Date.now()),
               },
             })}

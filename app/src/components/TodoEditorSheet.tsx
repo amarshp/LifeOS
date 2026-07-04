@@ -4,7 +4,7 @@ import {
 } from 'react-native'
 import { fonts } from '../theme/tokens'
 import type { ColorPalette } from '../theme/tokens'
-import type { Category, Todo, TodoPriority, RecurrenceType, TodoStep } from '../types/database'
+import type { Category, Todo, TodoPriority, TodoKind, RecurrenceType, TodoStep } from '../types/database'
 import { todayStr } from '../lib/date'
 import { addLocalDays } from '../lib/time-range'
 import * as todosService from '../services/todos'
@@ -25,6 +25,15 @@ const PRIORITIES: { value: TodoPriority; label: string; color: string }[] = [
   { value: 1, label: 'Low', color: '#8BB4CC' },
   { value: 2, label: 'Med', color: '#CCAA6B' },
   { value: 3, label: 'High', color: '#C8102E' },
+]
+
+// What the task means to the planner: promise = must be scheduled or
+// explicitly deferred; reminder = tiny date-bound ping; someday = parked wish.
+const KINDS: { value: TodoKind; label: string }[] = [
+  { value: 'flexible', label: 'Task' },
+  { value: 'commitment', label: 'Promise' },
+  { value: 'reminder', label: 'Reminder' },
+  { value: 'someday', label: 'Someday' },
 ]
 
 const RECURRENCES: { value: RecurrenceType; label: string }[] = [
@@ -55,6 +64,7 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
   const [title, setTitle] = useState('')
   const [categoryId, setCategoryId] = useState<string | null>(null)
   const [priority, setPriority] = useState<TodoPriority>(0)
+  const [kind, setKind] = useState<TodoKind>('flexible')
   const [deadlineDate, setDeadlineDate] = useState<string | null>(null)
   const [recurrence, setRecurrence] = useState<RecurrenceType>('none')
   const [notes, setNotes] = useState('')
@@ -69,6 +79,7 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
       setTitle(todo.title)
       setCategoryId(todo.category_id)
       setPriority(todo.priority)
+      setKind(todo.kind ?? 'flexible')
       setDeadlineDate(todo.deadline ? todo.deadline.slice(0, 10) : null)
       setRecurrence(todo.recurrence)
       setNotes(todo.notes ?? '')
@@ -77,7 +88,7 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
         setSteps(s.map((x) => ({ id: x.id, title: x.title, done: x.done })))
       }).catch(() => {})
     } else {
-      setTitle(''); setCategoryId(null); setPriority(0); setDeadlineDate(null)
+      setTitle(''); setCategoryId(null); setPriority(0); setKind('flexible'); setDeadlineDate(null)
       setRecurrence('none'); setNotes(''); setSteps([]); setOriginalSteps([]); setStepInput('')
     }
   }, [visible, todo])
@@ -116,13 +127,13 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
       const deadline = recurrence === 'none' && deadlineDate ? dateToEndOfDayIso(deadlineDate) : null
       if (todo) {
         await todosService.updateTodo(todo.id, {
-          title: t, category_id: categoryId, priority, deadline, recurrence,
+          title: t, category_id: categoryId, priority, kind, deadline, recurrence,
           notes: notes.trim() || null,
         })
         await reconcileSteps(todo.id)
       } else {
         const created = await todosService.createTodo({
-          title: t, category_id: categoryId, priority, deadline, recurrence,
+          title: t, category_id: categoryId, priority, kind, deadline, recurrence,
           notes: notes.trim() || null,
         })
         await reconcileSteps(created.id)
@@ -165,6 +176,16 @@ export function TodoEditorSheet({ visible, todo, categories, colors: tc, onClose
                   style={[styles.chip, { borderColor: priority === p.value ? p.color : tc.border, backgroundColor: priority === p.value ? tc.surface3 : 'transparent' }]}>
                   <View style={[styles.pdot, { backgroundColor: p.color }]} />
                   <Text style={[styles.chipTxt, { color: priority === p.value ? tc.text1 : tc.text3 }]}>{p.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={[styles.label, { color: tc.text3 }]}>KIND</Text>
+            <View style={styles.row}>
+              {KINDS.map((k) => (
+                <Pressable key={k.value} onPress={() => setKind(k.value)}
+                  style={[styles.chip, { borderColor: kind === k.value ? tc.border3 : tc.border, backgroundColor: kind === k.value ? tc.surface3 : 'transparent' }]}>
+                  <Text style={[styles.chipTxt, { color: kind === k.value ? tc.text1 : tc.text3 }]}>{k.label}</Text>
                 </Pressable>
               ))}
             </View>

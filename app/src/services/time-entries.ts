@@ -96,6 +96,13 @@ export async function startTimerStopPrevious(params: {
     const handoffMs = new Date(params.startTime).getTime()
     for (const r of running) {
       const startMs = new Date(r.start_time).getTime()
+      // Mis-tap protection: a timer that ran under a minute before being
+      // switched away was almost certainly accidental — discard it instead of
+      // leaving sub-minute dust on the timeline (and don't complete its todo).
+      if (handoffMs - startMs < 60_000) {
+        await supabase.from('time_entries').delete().eq('id', r.id)
+        continue
+      }
       const endIso = handoffMs > startMs ? params.startTime : r.start_time
       const { error: stopErr } = await supabase
         .from('time_entries')
@@ -127,7 +134,16 @@ export async function startTimerStopPrevious(params: {
 
   if (error) throw error
   const entryId = data as string
-  for (const r of stopped) await completeLinkedTodo(r.todo_id)
+  const nowMs = Date.now()
+  for (const r of stopped) {
+    // Same mis-tap rule as the custom-start path: sub-minute switched-away
+    // timers vanish rather than becoming timeline dust.
+    if (nowMs - new Date(r.start_time).getTime() < 60_000) {
+      await supabase.from('time_entries').delete().eq('id', r.id)
+      continue
+    }
+    await completeLinkedTodo(r.todo_id)
+  }
   if (params.notes || params.todoId || params.calendarBlockId) {
     await updateEntry(entryId, {
       ...(params.notes ? { notes: params.notes } : {}),
