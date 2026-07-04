@@ -417,3 +417,9 @@ verify_jwt = false
 
 [functions.install-page]
 verify_jwt = false
+
+[functions.ota-manifest]
+verify_jwt = false
+
+[functions.enrich-capture]
+verify_jwt = false
