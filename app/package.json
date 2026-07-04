@@ -55,5 +55,14 @@
   "overrides": {
     "expo-asset": "~12.0.13",
     "expo-constants": "~18.0.13"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "expo-live-activity"
+        ]
+      }
+    }
   }
 }
