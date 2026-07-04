@@ -566,6 +566,7 @@ export default function DayScreen() {
   }, [dateStr, isToday, now, params.editEntry])
 
   useEffect(() => {
+    if (viewMode !== 'timeline') return // ScrollView not mounted in list mode
     const target = pendingScrollTargetRef.current
     if (!target || !isDateInRange(target.date, windowStartDate, windowEndDate)) return
     const id = setTimeout(() => {
@@ -574,7 +575,7 @@ export default function DayScreen() {
       }
     }, 50)
     return () => clearTimeout(id)
-  }, [scrollToTarget, windowEndDate, windowStartDate])
+  }, [scrollToTarget, windowEndDate, windowStartDate, viewMode])
 
   function pxToSnappedDate(px: number): Date {
     const maxPx = Math.max(0, timelineHeight - 1)
@@ -792,9 +793,19 @@ export default function DayScreen() {
     setViewMode(prev => {
       const next = prev === 'timeline' ? 'list' : 'timeline'
       AsyncStorage.setItem('@lifeos_day_view', next).catch(() => {})
+      if (next === 'timeline') {
+        // The timeline ScrollView remounts at offset 0 (blank top of the
+        // window, wrong date). Aim it back at the selected day before it shows.
+        const n = new Date()
+        pendingScrollTargetRef.current = {
+          date: dateStr,
+          minute: dateStr === toLocalDateStr(n) ? n.getHours() * 60 + n.getMinutes() : 7 * 60,
+          center: true,
+        }
+      }
       return next
     })
-  }, [])
+  }, [dateStr])
 
   const openGapFill = useCallback((startIso: string, endIso: string) => {
     setEntrySheetRange({ startTime: startIso, endTime: endIso })

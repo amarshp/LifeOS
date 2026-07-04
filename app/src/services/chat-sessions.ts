@@ -14,13 +14,17 @@ export interface ChatSession {
   updated_at: string
 }
 
-export async function getRecentSessions(limit = 12): Promise<ChatSession[]> {
-  const { data, error } = await supabase
+/** Recent sessions — scoped to a plan-target date when given (the Agent's
+ * date bar), so each day shows its own conversations. */
+export async function getRecentSessions(date?: string, limit = 12): Promise<ChatSession[]> {
+  let q = supabase
     .from('chat_sessions')
     .select('id, title, date, messages, plan, updated_at')
     .is('deleted_at', null)
     .order('updated_at', { ascending: false })
     .limit(limit)
+  if (date) q = q.eq('date', date)
+  const { data, error } = await q
   if (error) throw new Error(error.message)
   return (data ?? []) as ChatSession[]
 }

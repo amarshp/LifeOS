@@ -120,11 +120,12 @@ export default function PlanScreen() {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }))
   }, [])
 
-  // Recent sessions — refreshed whenever the screen shows the empty state.
+  // Recent sessions — scoped to the selected date, refreshed whenever the
+  // screen shows the empty state or the date bar moves.
   useEffect(() => {
     if (messages.length > 0) return
-    chatSessionsService.getRecentSessions().then(setRecentSessions).catch(() => {})
-  }, [messages.length])
+    chatSessionsService.getRecentSessions(date).then(setRecentSessions).catch(() => {})
+  }, [messages.length, date])
 
   // Persist the conversation after every completed turn (fire-and-forget).
   const persistSession = useCallback((msgs: ChatMessage[], turnPlan: ProposedPlan | null, forDate: string) => {
