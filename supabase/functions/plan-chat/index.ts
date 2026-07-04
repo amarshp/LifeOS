@@ -1172,6 +1172,7 @@ function buildSystemPrompt(
   evidenceSnapshot: string,
   memories: Array<{ id: string; kind: string; content: string; pinned: boolean }>,
   yesterdayJournal: string | null,
+  currentState: string,
 ): string {
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const catLines = categories.length
@@ -1216,6 +1217,9 @@ ${existingLines}
 
 BACKLOG TASKS the user wants to get done (pull the relevant ones into THIS day's plan, highest priority and nearest deadline first — only as many as realistically fit; leave the rest for another day):
 ${todoLines}
+
+CURRENT STATE (most recent tracked entries, newest first — what the user is doing and where they plausibly are RIGHT NOW):
+${currentState}
 
 EVIDENCE SNAPSHOT (deterministic, computed from the user's real tracked data — interpret it, never contradict it, and cite the window when you use it, e.g. "over the last 7 days"):
 ${evidenceSnapshot}
@@ -1269,6 +1273,9 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - DEV NOTES: whenever the user complains about the APP ITSELF or wishes it worked differently ("this time is wrong", "it's slow", "I want a button that…"), call log_feedback with a crisp title — silently, then respond normally. These are for the developer, not the user's task list; never add_todo for app bugs.
 - Building or reworking the WHOLE day's plan → use the "plan" field of your reply (the user taps Apply), NOT add_calendar_block calls.
 - ONE ACTIVE PLAN: Apply REPLACES every non-fixed, non-recurring block for the day (future-only when replanning today) — there are never two parallel schedules. So your plan must be COMPLETE: re-include anything from ALREADY PLANNED that should survive (meals, sleep, tasks you agree with) — only [FIXED] appointments and recurring routines persist on their own.
+- CONFIRM OVERRIDES: if ALREADY PLANNED has meaningful content and the user asks for a NEW plan (not a tweak), confirm once before emitting the plan field: name what exists ("you already have gym at 6 and dinner at 8 planned") and ask whether to replace or work around it. Skip the confirmation only when the user already said to redo/replace/replan.
+- PLAN FROM CURRENT STATE: read CURRENT STATE before planning. A running entry tells you where the user is and what they're doing — if they're out (commuting, at a restaurant, at the gym), the plan's first items must get them from THERE to the next thing (finish up, travel home), never assume they're at home/office. Same for replanning: start from the running activity, not from an imagined idle state.
+- NO GAPS: a day plan is a continuous timeline — consecutive items should touch (buffers/travel are themselves items). If the user's own outline leaves a gap of 30+ minutes, do not silently keep it: either ask ONE question about how to fill it or propose something explicit (rest, buffer, free time) so every stretch is accounted for up to sleep.
 - REPLAN FROM NOW: when the target day is today and the user asks to redo/replan the rest of the day, first look at reality (list_time_entries + list_calendar_blocks), then propose a plan that starts AT OR AFTER the current time — never re-emit items for hours that already passed. Apply only replaces planned blocks from now onward; the morning that already happened stays.
 - REPLAN TRADEOFFS: when the day is meaningfully behind, ask at most TWO sharp tradeoff questions before proposing (e.g. protect the gym or recover sleep; shorten deep work or defer a task) — ground them in the EVIDENCE SNAPSHOT and state facts (with their window) separately from your judgment. Then propose. Do not interrogate further.
 - After acting, your reply must state plainly what you changed.
@@ -1349,7 +1356,7 @@ Deno.serve(async (req) => {
   const allowedTodoIds = new Set(((todos ?? []) as BacklogTodo[]).map((t) => t.id))
 
   const yesterdayStr = addDaysStr(todayLocal(timezone), -1)
-  const [{ data: memories }, { data: yJournal }, evidenceSnapshot] = await Promise.all([
+  const [{ data: memories }, { data: yJournal }, { data: recentEntries }, evidenceSnapshot] = await Promise.all([
     supabase
       .from('agent_memories')
       .select('id, kind, content, pinned')
@@ -1358,9 +1365,25 @@ Deno.serve(async (req) => {
       .order('last_confirmed_at', { ascending: false })
       .limit(40),
     supabase.from('journal_entries').select('summary, answers').eq('date', yesterdayStr).maybeSingle(),
+    // What the user is doing RIGHT NOW + the last few things they did — the
+    // model must plan from this reality (e.g. currently out of the house).
+    supabase
+      .from('time_entries')
+      .select('title, start_time, end_time, is_running')
+      .is('deleted_at', null)
+      .order('start_time', { ascending: false })
+      .limit(5),
     buildEvidenceSnapshot(supabase, timezone, (id) => cats.find((c) => c.id === id)?.name ?? null)
       .catch(() => '(snapshot unavailable)'),
   ])
+
+  const currentState = (recentEntries ?? [])
+    .map((e) =>
+      e.is_running
+        ? `- NOW RUNNING: "${e.title}" since ${isoToLocal(e.start_time, timezone)}`
+        : `- ${e.title}: ${isoToLocal(e.start_time, timezone)} → ${e.end_time ? isoToLocal(e.end_time, timezone) : '?'}`,
+    )
+    .join('\n') || '(no recent entries)'
 
   const memoryRows = (memories ?? []) as Array<{ id: string; kind: string; content: string; pinned: boolean }>
   const system = buildSystemPrompt(
@@ -1373,6 +1396,7 @@ Deno.serve(async (req) => {
     evidenceSnapshot,
     memoryRows,
     yJournal ? `${yJournal.summary}${yJournal.answers ? ` — answers: ${JSON.stringify(yJournal.answers)}` : ''}` : null,
+    currentState,
   )
 
   const ctx: ToolCtx = {

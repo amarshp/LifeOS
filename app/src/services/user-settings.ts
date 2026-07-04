@@ -21,7 +21,7 @@ export interface UserSettings extends NotificationPrefs {
 const DEFAULTS: UserSettings = {
   allow_parallel_timers: false,
   notif_plan_enabled: true,
-  notif_plan_offsets_min: [15, 5],
+  notif_plan_offsets_min: [5],
   notif_task_enabled: true,
   notif_task_offsets_min: [60],
   notif_plan_tomorrow_hhmm: null,
