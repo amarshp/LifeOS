@@ -12,6 +12,7 @@ import {
   Alert,
 } from 'react-native'
 import { useRouter } from 'expo-router'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Svg, { Path, Rect } from 'react-native-svg'
 import {
   useAudioRecorder,
@@ -276,7 +277,7 @@ export default function PlanScreen() {
     recorder.record()
   }, [recorder, transcribing, sending])
 
-  const endHold = useCallback(async () => {
+  const endHold = useCallback(async (cancelled = false) => {
     if (!holdRef.current) return
     holdRef.current = false
     const heldMs = Date.now() - holdStartTsRef.current
@@ -288,6 +289,10 @@ export default function PlanScreen() {
     // Leave record mode right away — a session stuck in record makes the
     // reply's TTS start seconds late (and quiet) on iOS.
     await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => {})
+    if (cancelled) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
+      return // slid away — discard the recording
+    }
     if (heldMs < 500) return // accidental tap — nothing worth transcribing
     try {
       setTranscribing(true)
@@ -301,6 +306,55 @@ export default function PlanScreen() {
       setTranscribing(false)
     }
   }, [recorder, send])
+
+  // Hold = record; slide left while holding = cancel (WhatsApp-style).
+  const micCancelRef = useRef(false)
+  const [micCancelArmed, setMicCancelArmed] = useState(false)
+  const micGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .onBegin(() => {
+          micCancelRef.current = false
+          setMicCancelArmed(false)
+          void startHold()
+        })
+        .onUpdate((e) => {
+          const armed = e.translationX < -70
+          if (armed !== micCancelRef.current) {
+            micCancelRef.current = armed
+            setMicCancelArmed(armed)
+            if (armed) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+          }
+        })
+        .onFinalize(() => {
+          setMicCancelArmed(false)
+          void endHold(micCancelRef.current)
+        }),
+    [startHold, endHold],
+  )
+
+  // Long-press any message → remove it and everything after (then re-ask).
+  const deleteFromMessage = useCallback((index: number) => {
+    const doIt = () => {
+      tts.stop()
+      const trimmed = messagesRef.current.slice(0, index)
+      setMessages(trimmed)
+      setPlan(null)
+      if (sessionIdRef.current) {
+        if (trimmed.length === 0) {
+          chatSessionsService.deleteSession(sessionIdRef.current).catch(() => {})
+          sessionIdRef.current = null
+        } else {
+          chatSessionsService.updateSession(sessionIdRef.current, { messages: trimmed, plan: null }).catch(() => {})
+        }
+      }
+    }
+    Alert.alert('Remove message', 'Remove this message and everything after it?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: doIt },
+    ])
+  }, [])
 
   const apply = useCallback(async () => {
     if (!plan || applying) return
@@ -361,9 +415,9 @@ export default function PlanScreen() {
   const headerSub = useMemo(() => {
     if (transcribing) return 'Transcribing…'
     if (sending) return 'Thinking…'
-    if (recorderState.isRecording) return 'Listening… release to send'
+    if (recorderState.isRecording) return micCancelArmed ? 'Release to cancel' : 'Listening… release to send · slide ← to cancel'
     return null
-  }, [transcribing, sending, recorderState.isRecording])
+  }, [transcribing, sending, recorderState.isRecording, micCancelArmed])
 
   // One-tap starters. Prompts about the current day flip the target date to
   // today first (a fresh session — chips only show when the chat is empty).
@@ -479,8 +533,10 @@ export default function PlanScreen() {
         )}
 
         {messages.map((m, i) => (
-          <View
+          <Pressable
             key={i}
+            onLongPress={() => deleteFromMessage(i)}
+            delayLongPress={400}
             style={[
               styles.bubble,
               m.role === 'user'
@@ -489,7 +545,7 @@ export default function PlanScreen() {
             ]}
           >
             <Text style={[styles.bubbleText, { color: colors.text1 }]}>{m.content}</Text>
-          </View>
+          </Pressable>
         ))}
 
         {sending && (
@@ -580,25 +636,24 @@ export default function PlanScreen() {
             <SendIcon color="#fff" />
           </Pressable>
         ) : (
-          <Pressable
-            onPressIn={startHold}
-            onPressOut={endHold}
-            disabled={transcribing || sending}
-            style={[
-              styles.circleBtn,
-              {
-                backgroundColor: recorderState.isRecording ? ACCENT : colors.surface3,
-                opacity: transcribing || sending ? 0.6 : 1,
-                transform: [{ scale: recorderState.isRecording ? 1.15 : 1 }],
-              },
-            ]}
-          >
-            {transcribing ? (
-              <ActivityIndicator color={colors.text2} />
-            ) : (
-              <MicIcon color={recorderState.isRecording ? '#fff' : colors.text1} />
-            )}
-          </Pressable>
+          <GestureDetector gesture={micGesture}>
+            <View
+              style={[
+                styles.circleBtn,
+                {
+                  backgroundColor: micCancelArmed ? colors.surface3 : recorderState.isRecording ? ACCENT : colors.surface3,
+                  opacity: transcribing || sending ? 0.6 : 1,
+                  transform: [{ scale: recorderState.isRecording && !micCancelArmed ? 1.15 : 1 }],
+                },
+              ]}
+            >
+              {transcribing ? (
+                <ActivityIndicator color={colors.text2} />
+              ) : (
+                <MicIcon color={recorderState.isRecording && !micCancelArmed ? '#fff' : colors.text1} />
+              )}
+            </View>
+          </GestureDetector>
         )}
       </View>
     </KeyboardAvoidingView>

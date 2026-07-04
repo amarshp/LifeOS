@@ -6,7 +6,9 @@
 //
 // Deploy: npx supabase functions deploy plan-transcribe
 
-const MODEL = 'whisper-1'
+// gpt-4o-mini-transcribe: same quality on short voice notes, meaningfully
+// lower latency than whisper-1 (the "Transcribing…" wait the user flagged).
+const MODEL = 'gpt-4o-mini-transcribe'
 
 interface Body {
   audio_base64?: string

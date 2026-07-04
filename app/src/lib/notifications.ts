@@ -49,6 +49,13 @@ function inQuietHours(fireMs: number, prefs: UserSettings): boolean {
   return qs < qe ? h >= qs && h < qe : h >= qs || h < qe // wraps midnight
 }
 
+// Absolute clock time — correct both when the ping fires AND when the row sits
+// in the Notification Center queue (relative text like "in 60 min" reads wrong
+// there because it describes the lead-time offset, not distance from now).
+function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
 function parseHHMM(hhmm: string, dayOffset: number): number | null {
   const m = hhmm.match(/^(\d{1,2}):(\d{2})$/)
   if (!m) return null
@@ -87,7 +94,7 @@ export async function computeUpcoming(): Promise<UpcomingNotification[]> {
           kind: 'plan',
           fireMs,
           title: block.title,
-          body: `Starts in ${offset} min`,
+          body: `Starts at ${fmtClock(startMs)}`,
           reminderId: null,
         })
       }
@@ -110,7 +117,7 @@ export async function computeUpcoming(): Promise<UpcomingNotification[]> {
           kind: 'task',
           fireMs,
           title: todo.title,
-          body: offset >= 60 ? `Due in ${Math.round(offset / 60)}h` : `Due in ${offset} min`,
+          body: `Due at ${fmtClock(dueMs)}`,
           reminderId: null,
         })
       }

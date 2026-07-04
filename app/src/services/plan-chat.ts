@@ -169,6 +169,24 @@ export async function applyChatPlan(
     else await updatePlan(old.id, { status: 'archived' })
   }
 
+  // 1b. ONE ACTIVE PLAN: future flexible/protected blocks of any source are
+  // also replaced — otherwise a new plan stacks in parallel with manual blocks
+  // and the day shows two overlapping schedules. FIXED blocks (appointments)
+  // survive; the model was told not to move them without asking. Everything
+  // removed here is captured for Undo.
+  const dayBlocks = await calendarBlocksService.getBlocksForDate(date)
+  for (const b of dayBlocks) {
+    if (b.flexibility === 'fixed') continue
+    // Recurring blocks are standing routines, not a stacked plan — deleting the
+    // row would kill every future occurrence. Leave them; the model sees them
+    // in its preflight and plans around them.
+    if (b.recurrence !== 'none') continue
+    if (cutoffIso && b.start_time < cutoffIso) continue
+    if (deletedBlockIds.includes(b.id)) continue
+    await calendarBlocksService.deleteBlock(b.id)
+    deletedBlockIds.push(b.id)
+  }
+
   // 2. Create the fresh plan.
   const created = await createPlan({
     date,

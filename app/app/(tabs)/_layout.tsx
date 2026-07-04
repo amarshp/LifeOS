@@ -8,7 +8,7 @@ import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
 import * as timeEntriesService from '../../src/services/time-entries'
-import { reconcileLiveActivities, type NextPlanned } from '../../src/lib/liveActivity'
+import { reconcileLiveActivities, initLiveActivityTracking, type NextPlanned } from '../../src/lib/liveActivity'
 import { reconcileRunawayNotifications } from '../../src/lib/runawayNotify'
 import { reconcileNotifications } from '../../src/lib/notifications'
 import { registerPushToken } from '../../src/lib/pushToken'
@@ -91,6 +91,7 @@ export default function TabLayout() {
   // Sync running timers -> iOS Live Activities (Dynamic Island + Lock Screen).
   // Single instance: this tab root mounts once.
   useEffect(() => {
+    initLiveActivityTracking() // learn push-started card ids so stops can end them
     reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
     reconcileRunawayNotifications(timer.running).catch(() => {})
   }, [timer.running, nextPlanned])

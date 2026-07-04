@@ -391,6 +391,31 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'log_feedback',
+      description:
+        'Log a bug report or improvement idea about the LifeOS app itself into the dev notes ("the notification time is wrong", "I wish the timer did X"). The developer assistant reads these later. Log it AND still answer the user normally.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'One-line summary of the bug/idea.' },
+          detail: { type: 'string', description: "The user's words plus any context worth keeping." },
+          kind: { type: 'string', enum: ['bug', 'idea'], description: 'Default bug.' },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_feedback',
+      description: 'List open dev notes (bugs/ideas already logged) when the user asks what has been reported.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'save_memory',
       description:
         'Save a durable fact about the user (profile fact, routine, preference). ONLY when the user explicitly tells you to remember something, or explicitly confirms your "should I remember this?" question — never silently.',
@@ -906,6 +931,37 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       return await completeTodoRecord(ctx, id)
     }
 
+    case 'log_feedback': {
+      const title = str('title')
+      if (!title) return { error: 'title required' }
+      const kind = str('kind') === 'idea' ? 'idea' : 'bug'
+      // Idempotency: same open title → no duplicate.
+      const { data: dup } = await supabase
+        .from('dev_notes')
+        .select('id')
+        .eq('title', title)
+        .eq('status', 'open')
+        .limit(1)
+      if (dup && dup.length > 0) return { ok: true, note: 'already logged' }
+      const { error } = await supabase
+        .from('dev_notes')
+        .insert({ user_id: ctx.userId, kind, title, detail: rawStr('detail') ?? null })
+      if (error) return { error: error.message }
+      ctx.actions.push(`Noted ${kind}: ${title}`)
+      return { ok: true }
+    }
+
+    case 'list_feedback': {
+      const { data, error } = await supabase
+        .from('dev_notes')
+        .select('kind, title, detail, created_at')
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(30)
+      if (error) return { error: error.message }
+      return (data ?? []).map((n) => ({ kind: n.kind, title: n.title, detail: n.detail, logged: isoToLocal(n.created_at, tz) }))
+    }
+
     case 'save_memory': {
       const content = str('content')
       if (!content) return { error: 'content required' }
@@ -1210,7 +1266,9 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - Quick schedule edits ("push my call to 3", "add dentist at 4") → use the calendar block tools on the right date.
 - TASKS: you manage the user's backlog too. When they mention something they need to do without a fixed time ("remind me to renew my license", "I should call the plumber sometime") → add_todo. When they say they finished a task → complete_todo (plus log the time if they said when). Linking work to tasks: pass todo_id on start_timer / add_completed_entry / add_calendar_block when the activity IS one of the backlog tasks — stopping a linked timer or logging a linked period completes the task automatically.
 - REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.
+- DEV NOTES: whenever the user complains about the APP ITSELF or wishes it worked differently ("this time is wrong", "it's slow", "I want a button that…"), call log_feedback with a crisp title — silently, then respond normally. These are for the developer, not the user's task list; never add_todo for app bugs.
 - Building or reworking the WHOLE day's plan → use the "plan" field of your reply (the user taps Apply), NOT add_calendar_block calls.
+- ONE ACTIVE PLAN: Apply REPLACES every non-fixed, non-recurring block for the day (future-only when replanning today) — there are never two parallel schedules. So your plan must be COMPLETE: re-include anything from ALREADY PLANNED that should survive (meals, sleep, tasks you agree with) — only [FIXED] appointments and recurring routines persist on their own.
 - REPLAN FROM NOW: when the target day is today and the user asks to redo/replan the rest of the day, first look at reality (list_time_entries + list_calendar_blocks), then propose a plan that starts AT OR AFTER the current time — never re-emit items for hours that already passed. Apply only replaces planned blocks from now onward; the morning that already happened stays.
 - REPLAN TRADEOFFS: when the day is meaningfully behind, ask at most TWO sharp tradeoff questions before proposing (e.g. protect the gym or recover sleep; shorten deep work or defer a task) — ground them in the EVIDENCE SNAPSHOT and state facts (with their window) separately from your judgment. Then propose. Do not interrogate further.
 - After acting, your reply must state plainly what you changed.
