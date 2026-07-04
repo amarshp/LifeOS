@@ -175,7 +175,7 @@ async function ensurePermission(n: NotifModule): Promise<boolean> {
  * Make the OS schedule match computeUpcoming() for the rolling window.
  * Idempotent; call on foreground, after plan/task changes, after prefs edits.
  */
-const DELIVERED_TTL_MS = 30 * 60_000 // banners older than this get swept
+const DELIVERED_TTL_MS = 30 * 60_000 // plan nudges older than this get swept
 
 export async function reconcileNotifications(): Promise<void> {
   const n = getModule()
@@ -183,11 +183,14 @@ export async function reconcileNotifications(): Promise<void> {
 
   await remindersService.sweepFiredReminders().catch(() => {})
 
-  // Auto-clear stale delivered banners (this app's only): a plan reminder that
-  // sat unread for 30+ minutes is noise by the time the user looks.
+  // Auto-clear stale PLAN-BLOCK nudges only ("Gym starts at 6:00") — once the
+  // block has long started they're noise. Everything else stays until the user
+  // acts: task deadlines, agent/user reminders, rituals, brain pushes, runaway
+  // alerts are commitments, not nudges.
   try {
     const presented = await n.getPresentedNotificationsAsync()
     for (const p of presented) {
+      if (!p.request.identifier.startsWith(`${ID_PREFIX}plan:`)) continue
       const deliveredMs = (p.date ?? 0) * (p.date && p.date < 1e12 ? 1000 : 1) // seconds vs ms defensive
       if (deliveredMs > 0 && Date.now() - deliveredMs > DELIVERED_TTL_MS) {
         await n.dismissNotificationAsync(p.request.identifier).catch(() => {})
