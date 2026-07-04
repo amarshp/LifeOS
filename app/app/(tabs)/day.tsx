@@ -1481,6 +1481,11 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
   const [parallel, setParallel] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Capture-first: everything except the title (and time, when it matters)
+  // lives behind one More-options disclosure.
+  const [showMore, setShowMore] = useState(false)
+  // Category is inferred from the title unless the user picks one explicitly.
+  const [catIsAuto, setCatIsAuto] = useState(true)
   const [localNewCats, setLocalNewCats] = useState<Category[]>([])
   const [showNewCat, setShowNewCat] = useState(false)
   const [newCatName, setNewCatName] = useState('')
@@ -1512,15 +1517,6 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     query: tagInput,
   }), [savedTags, selectedCat, tagInput, tags, tagUsage])
 
-  useEffect(() => {
-    if (!titleIsAuto) return
-    const cat = categoryOptions.find(c => c.id === selectedCat)
-    const parts: string[] = []
-    if (cat) parts.push(cat.name)
-    parts.push(...tags)
-    setTitle(parts.join(' · '))
-  }, [selectedCat, tags, titleIsAuto, categoryOptions])
-
   function syncStartFields(date: Date, custom: boolean) {
     const start12 = to12(date.getHours())
     setStartDate(date)
@@ -1544,6 +1540,8 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     if (!visible) return
     setTitleIsAuto(true)
     setSelectedTodoId(null)
+    setShowMore(false)
+    setCatIsAuto(true)
     timeEntriesService.getCategoryUsageNearHour(new Date().getHours(), new Date().getDay())
       .then(usage => setCategoryUsage(new Map(usage.map(u => [u.category_id, u.count]))))
       .catch(() => {})
@@ -1572,6 +1570,13 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       setEndMin('00')
       setEndPeriod(end12.period)
       setMode('plan')
+    } else if (viewDate !== toLocalDateStr(new Date())) {
+      // Viewing a past day — a live timer makes no sense there; the intent is
+      // almost always to log something that already happened.
+      const noon = new Date(`${viewDate}T12:00:00`)
+      syncStartFields(noon, true)
+      syncEndFields(new Date(noon.getTime() + 60 * 60 * 1000))
+      setMode('past')
     } else {
       syncStartFields(new Date(), false)
       setMode('timer')
@@ -1580,7 +1585,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     setSubmitting(false)
     setError(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, initialLogPastRange, initialMode, blocks])
+  }, [visible, initialLogPastRange, initialMode, blocks, viewDate])
 
   // Separate effect: set a default category once options are available.
   // Kept apart so category-usage re-sorting never re-triggers mode init above.
@@ -1645,6 +1650,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       const cat = await categoriesService.createCategory({ name, color: newCatColor, sort_order: sortOrder, kind: categoriesService.inferCategoryKind(name) })
       setLocalNewCats(prev => prev.some(existing => existing.id === cat.id) ? prev : [...prev, cat])
       setSelectedCat(cat.id)
+      setCatIsAuto(false)
       setShowNewCat(false)
       setNewCatName('')
       setNewCatColor(CATEGORY_PALETTE[0])
@@ -1659,18 +1665,14 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
 
   function toggleTodo(t: Todo) {
     if (selectedTodoId === t.id) {
-      // Deselect → return the name to auto-fill (category · tags).
+      // Deselect → clear the borrowed task title.
       setSelectedTodoId(null)
-      const cat = categoryOptions.find(c => c.id === selectedCat)
-      const parts: string[] = []
-      if (cat) parts.push(cat.name)
-      parts.push(...tags)
-      setTitle(parts.join(' · '))
+      setTitle('')
       setTitleIsAuto(true)
       return
     }
     setSelectedTodoId(t.id)
-    if (t.category_id) setSelectedCat(t.category_id)
+    if (t.category_id) { setSelectedCat(t.category_id); setCatIsAuto(false) }
     setTitle(t.title)
     setTitleIsAuto(false)
   }
@@ -1701,7 +1703,14 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     if (submitting) return
     setError(null)
 
-    const effectiveCat = selectedCat ?? categoryOptions[0]?.id ?? null
+    // Title-first: when the user hasn't explicitly picked a category, infer it
+    // from a category name mentioned in the title; else fall back to the
+    // most-used category for this hour (categoryOptions is usage-sorted).
+    const titleLower = ` ${title.trim().toLowerCase()} `
+    const inferredCat = catIsAuto && title.trim()
+      ? categoryOptions.find(c => titleLower.includes(` ${c.name.toLowerCase()} `))?.id ?? null
+      : null
+    const effectiveCat = inferredCat ?? selectedCat ?? categoryOptions[0]?.id ?? null
     if (!effectiveCat) { onClose(); return }
 
     const allTags = uniqueTags([...tags, ...(tagInput.trim() ? [tagInput.trim()] : [])])
@@ -1841,12 +1850,6 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     }
   }
 
-  const catNum   = mode === 'timer' ? '01' : '02'
-  const tagNum   = mode === 'timer' ? '02' : mode === 'plan' ? '04' : '03'
-  const nameNum  = mode === 'timer' ? '03' : mode === 'plan' ? '05' : '04'
-  const notesNum = mode === 'timer' ? '04' : mode === 'plan' ? '06' : '05'
-  const timeNum  = mode === 'timer' ? '05' : '01'
-
   return (
     <SheetShell
       visible={visible}
@@ -1876,30 +1879,20 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
       }
     >
 
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-              <Pressable
-                onPress={switchToStartTimer}
-                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: mode === 'timer' ? tc.text1 : tc.surface3 }}
-              >
-                <Text style={{ color: mode === 'timer' ? tc.bg : tc.text2, fontSize: 12, fontFamily: fonts.ui }}>Start timer</Text>
-              </Pressable>
-              <Pressable
-                onPress={switchToLogPast}
-                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: mode === 'past' ? tc.text1 : tc.surface3 }}
-              >
-                <Text style={{ color: mode === 'past' ? tc.bg : tc.text2, fontSize: 12, fontFamily: fonts.ui }}>Log past</Text>
-              </Pressable>
-              <Pressable
-                onPress={switchToPlan}
-                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: mode === 'plan' ? tc.text1 : tc.surface3 }}
-              >
-                <Text style={{ color: mode === 'plan' ? tc.bg : tc.text2, fontSize: 12, fontFamily: fonts.ui }}>Plan block</Text>
-              </Pressable>
-            </View>
+            <Text style={[sheetStyles.eyebrow, { marginBottom: 10, color: tc.text3 }]}>
+              {mode === 'timer' ? 'Start now' : mode === 'past' ? 'Log past time' : 'Plan a block'}
+            </Text>
+            <TextInput
+              style={[sheetStyles.input, { color: tc.text1, borderBottomColor: tc.border2, fontSize: 18, paddingBottom: 10, marginBottom: 4 }]}
+              placeholder={mode === 'timer' ? 'What are you doing?' : mode === 'past' ? 'What did you do?' : 'What are you planning?'}
+              placeholderTextColor={tc.text4}
+              value={title}
+              onChangeText={text => { setTitle(text); setTitleIsAuto(text === '') }}
+            />
 
             {mode !== 'timer' && (
               <>
-                <Text style={[sheetStyles.eyebrow, { marginTop: 0, marginBottom: 6, color: tc.text3 }]}>{timeNum} — Time</Text>
+                <Text style={[sheetStyles.eyebrow, { marginTop: 18, marginBottom: 6, color: tc.text3 }]}>Time</Text>
                 {mode === 'past' ? (
                   <View style={styles.timerStartRow}>
                     <TimePicker
@@ -1942,6 +1935,39 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
               </>
             )}
 
+            {mode === 'plan' && (
+              <>
+                <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Repeat</Text>
+                <View style={sheetStyles.chips}>
+                  {([
+                    { key: 'none', label: 'Once' },
+                    { key: 'daily', label: 'Daily' },
+                    { key: 'weekdays', label: 'Weekdays' },
+                    { key: 'mwf', label: 'M W F' },
+                    { key: 'weekly', label: 'Weekly' },
+                  ] as const).map(opt => (
+                    <Pressable
+                      key={opt.key}
+                      style={[styles.freqPill, { borderColor: tc.border2 }, planRecurrence === opt.key && [styles.freqActive, { backgroundColor: tc.text1 }]]}
+                      onPress={() => setPlanRecurrence(opt.key)}
+                    >
+                      <Text style={[styles.freqText, { color: tc.text3 }, planRecurrence === opt.key && { color: tc.bg }]}>{opt.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <Pressable
+              onPress={() => { setError(null); setShowMore(v => !v) }}
+              style={{ marginTop: 24, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+              hitSlop={8}
+            >
+              <Text style={[sheetStyles.eyebrow, { marginBottom: 0, color: tc.text3 }]}>More options</Text>
+              <Text style={{ color: tc.text4, fontSize: 9 }}>{showMore ? '▲' : '▼'}</Text>
+            </Pressable>
+
+            {showMore && (<>
             {openTodos.length > 0 && (
               <>
                 <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Task (optional)</Text>
@@ -1969,7 +1995,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
               </>
             )}
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>{catNum} — Category</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Category</Text>
             <View style={sheetStyles.chips}>
               {categoryOptions.map(cat => (
                 <CategoryChip
@@ -1977,7 +2003,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
                   name={cat.name}
                   color={cat.color}
                   selected={selectedCat === cat.id}
-                  onPress={() => { setSelectedCat(cat.id); setShowNewCat(false) }}
+                  onPress={() => { setSelectedCat(cat.id); setCatIsAuto(false); setShowNewCat(false) }}
                 />
               ))}
               <Pressable
@@ -2017,30 +2043,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
               </View>
             )}
 
-            {mode === 'plan' && (
-              <>
-                <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>03 — Repeat</Text>
-                <View style={sheetStyles.chips}>
-                  {([
-                    { key: 'none', label: 'Once' },
-                    { key: 'daily', label: 'Daily' },
-                    { key: 'weekdays', label: 'Weekdays' },
-                    { key: 'mwf', label: 'M W F' },
-                    { key: 'weekly', label: 'Weekly' },
-                  ] as const).map(opt => (
-                    <Pressable
-                      key={opt.key}
-                      style={[styles.freqPill, { borderColor: tc.border2 }, planRecurrence === opt.key && [styles.freqActive, { backgroundColor: tc.text1 }]]}
-                      onPress={() => setPlanRecurrence(opt.key)}
-                    >
-                      <Text style={[styles.freqText, { color: tc.text3 }, planRecurrence === opt.key && { color: tc.bg }]}>{opt.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </>
-            )}
-
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>{tagNum} — Tags</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Tags</Text>
             {tagSuggestions.length > 0 && (
               <View style={editStyles.suggestionRow}>
                 {tagSuggestions.map(suggestion => (
@@ -2073,31 +2076,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
               />
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>{nameNum} — Name</Text>
-            <TextInput
-              style={[sheetStyles.input, { color: tc.text1, borderBottomColor: tc.border2 }]}
-              placeholder="Auto-filled from category & tags"
-              placeholderTextColor={tc.text4}
-              value={title}
-              onChangeText={text => {
-                if (text === '') {
-                  // Re-apply auto-fill immediately. Can't rely on the useEffect
-                  // when titleIsAuto was already true — the dependency doesn't
-                  // change so the effect is skipped and title stays empty.
-                  const cat = categoryOptions.find(c => c.id === selectedCat)
-                  const parts: string[] = []
-                  if (cat) parts.push(cat.name)
-                  parts.push(...tags)
-                  setTitle(parts.join(' · '))
-                  setTitleIsAuto(true)
-                } else {
-                  setTitle(text)
-                  setTitleIsAuto(false)
-                }
-              }}
-            />
-
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>{notesNum} — Notes</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Notes</Text>
             <TextInput
               style={[sheetStyles.notesInput, { color: tc.text1, borderBottomColor: tc.border2 }]}
               placeholder="Notes (optional)"
@@ -2111,7 +2090,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
 
             {mode === 'timer' && (
               <>
-                <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>{timeNum} — Start time</Text>
+                <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Start time</Text>
                 <View style={styles.timerStartRow}>
                   <TimePicker
                     label="Start"
@@ -2145,6 +2124,25 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
                 ))}
               </>
             )}
+            </>)}
+
+            <View style={{ flexDirection: 'row', gap: 18, marginTop: 26 }}>
+              {mode !== 'timer' && (
+                <Pressable onPress={switchToStartTimer} hitSlop={8}>
+                  <Text style={{ color: tc.text4, fontSize: 12, fontFamily: fonts.ui }}>Start a timer instead</Text>
+                </Pressable>
+              )}
+              {mode !== 'past' && (
+                <Pressable onPress={switchToLogPast} hitSlop={8}>
+                  <Text style={{ color: tc.text4, fontSize: 12, fontFamily: fonts.ui }}>Log past time instead</Text>
+                </Pressable>
+              )}
+              {mode !== 'plan' && (
+                <Pressable onPress={switchToPlan} hitSlop={8}>
+                  <Text style={{ color: tc.text4, fontSize: 12, fontFamily: fonts.ui }}>Plan a block instead</Text>
+                </Pressable>
+              )}
+            </View>
     </SheetShell>
   )
 }
