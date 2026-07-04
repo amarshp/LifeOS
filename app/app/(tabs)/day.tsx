@@ -2414,7 +2414,7 @@ function AddPlanSheet({ visible, categories, date, blocks, onClose, onSave }: Ad
               autoFocus
             />
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>01 — Time</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Time</Text>
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TimePicker
                 label="Start"
@@ -2434,14 +2434,14 @@ function AddPlanSheet({ visible, categories, date, blocks, onClose, onSave }: Ad
               />
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>02 — Category</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Category</Text>
             <View style={sheetStyles.chips}>
               {categories.map(cat => (
                 <CategoryChip key={cat.id} name={cat.name} color={cat.color} selected={selectedCat === cat.id} onPress={() => setSelectedCat(cat.id)} />
               ))}
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>03 — Repeat</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Repeat</Text>
             <View style={sheetStyles.chips}>
               {recurrenceOptions.map(opt => (
                 <Pressable key={opt.key} style={[styles.freqPill, { borderColor: tc.border2 }, recurrence === opt.key && [styles.freqActive, { backgroundColor: tc.text1 }]]} onPress={() => setRecurrence(opt.key)}>
@@ -2450,7 +2450,7 @@ function AddPlanSheet({ visible, categories, date, blocks, onClose, onSave }: Ad
               ))}
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>04 — Tags</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Tags</Text>
             <View style={[editStyles.tagsRow, { borderBottomColor: tc.border2 }]}>
               {tags.map((t, i) => (
                 <Pressable key={i} onPress={() => setTags(tags.filter((_, j) => j !== i))}>
@@ -2713,7 +2713,7 @@ function EditBlockSheet({ block, categories, savedTags, tagUsage, onClose, onSav
               </View>
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 0, marginBottom: 6, color: tc.text3 }]}>01 — Time</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 0, marginBottom: 6, color: tc.text3 }]}>Time</Text>
             <View style={{ flexDirection: 'row', gap: 18 }}>
               <TimePicker
                 label="Start"
@@ -2733,7 +2733,7 @@ function EditBlockSheet({ block, categories, savedTags, tagUsage, onClose, onSav
               />
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>02 — Category</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Category</Text>
             <View style={sheetStyles.chips}>
               {categoryOptions.map(c => (
                 <CategoryChip key={c.id} name={c.name} color={c.color} selected={selectedCat === c.id} onPress={() => {
@@ -2743,7 +2743,7 @@ function EditBlockSheet({ block, categories, savedTags, tagUsage, onClose, onSav
               ))}
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>03 — Tags</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Tags</Text>
             {tagSuggestions.length > 0 && (
               <View style={editStyles.suggestionRow}>
                 {tagSuggestions.map(suggestion => (
@@ -2776,7 +2776,7 @@ function EditBlockSheet({ block, categories, savedTags, tagUsage, onClose, onSav
               />
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>04 — Name</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Name</Text>
             <TextInput
               style={[sheetStyles.input, { color: tc.text1, borderBottomColor: tc.border2 }]}
               value={title}
@@ -2797,7 +2797,7 @@ function EditBlockSheet({ block, categories, savedTags, tagUsage, onClose, onSav
               placeholderTextColor={tc.text4}
             />
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>05 — Notes</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Notes</Text>
             <TextInput
               style={[sheetStyles.notesInput, { color: tc.text1, borderBottomColor: tc.border2 }]}
               placeholder="Notes (optional)"
@@ -3188,7 +3188,7 @@ function EditEntrySheet({ entry, categories, savedTags, tagUsage, lastStopTime, 
             </View>
 
             {!entry?.is_running && (
-              <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>01 — Time</Text>
+              <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Time</Text>
             )}
             <View style={{ flexDirection: 'row', gap: 18 }}>
               <TimePicker
@@ -3252,7 +3252,7 @@ function EditEntrySheet({ entry, categories, savedTags, tagUsage, lastStopTime, 
               )}
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>02 — Category</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 10, color: tc.text3 }]}>Category</Text>
             <View style={sheetStyles.chips}>
               {categoryOptions.map(c => (
                 <CategoryChip key={c.id} name={c.name} color={c.color} selected={selectedCat === c.id} onPress={() => {
@@ -3298,7 +3298,7 @@ function EditEntrySheet({ entry, categories, savedTags, tagUsage, lastStopTime, 
               </View>
             )}
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>03 — Tags</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Tags</Text>
             {tagSuggestions.length > 0 && (
               <View style={editStyles.suggestionRow}>
                 {tagSuggestions.map(suggestion => (
@@ -3331,7 +3331,7 @@ function EditEntrySheet({ entry, categories, savedTags, tagUsage, lastStopTime, 
               />
             </View>
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>04 — Name</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Name</Text>
             <TextInput
               style={[sheetStyles.input, { color: tc.text1, borderBottomColor: tc.border2 }]}
               value={title}
@@ -3352,7 +3352,7 @@ function EditEntrySheet({ entry, categories, savedTags, tagUsage, lastStopTime, 
               placeholderTextColor={tc.text4}
             />
 
-            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>05 — Notes</Text>
+            <Text style={[sheetStyles.eyebrow, { marginTop: 22, marginBottom: 6, color: tc.text3 }]}>Notes</Text>
             <TextInput
               style={[sheetStyles.notesInput, { color: tc.text1, borderBottomColor: tc.border2 }]}
               placeholder="Notes (optional)"
