@@ -114,6 +114,7 @@ export function useHomeData() {
     running,
     currentEntry,
     currentCategory,
+    todayBlocks,
     visibleTodayBlocks,
     nextBlock,
     nextCategory,

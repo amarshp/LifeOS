@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native'
+import { useRouter } from 'expo-router'
+import { DayTasksSwitch } from '../../src/components/DayTasksSwitch'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
 import { todayStr } from '../../src/lib/date'
@@ -20,6 +22,7 @@ function fmtDate(dateStr: string): string {
 
 export default function TasksScreen() {
   const { colors } = useSettings()
+  const router = useRouter()
   const [date, setDate] = useState<string>(todayStr)
   const [categories, setCategories] = useState<Category[]>([])
   const [taskInput, setTaskInput] = useState('')
@@ -52,7 +55,11 @@ export default function TasksScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.title, { color: colors.text1 }]}>Tasks</Text>
+        <DayTasksSwitch
+          active="tasks"
+          onSwitch={() => router.replace('/(tabs)/day')}
+          colors={colors}
+        />
       </View>
 
       <TodoBacklog
@@ -105,7 +112,6 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 26, fontWeight: '700', fontFamily: fonts.displayBold, letterSpacing: -0.5 },
   dateBar: {
     flexDirection: 'row',
     alignItems: 'center',

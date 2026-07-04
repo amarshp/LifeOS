@@ -14,11 +14,12 @@ import {
   Animated,
   type DimensionValue,
 } from 'react-native'
-import { useFocusEffect, useLocalSearchParams } from 'expo-router'
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import Svg, { Path, Rect } from 'react-native-svg'
 import { DayListView } from '../../src/components/DayListView'
+import { DayTasksSwitch } from '../../src/components/DayTasksSwitch'
 import { colors, spacing, fonts, radii } from '../../src/theme/tokens'
 import { toLocalDateStr } from '../../src/lib/date'
 import { getVisiblePlannedBlocks } from '../../src/lib/planned-blocks'
@@ -312,7 +313,8 @@ function isDateInRange(date: string, startDate: string, endDate: string): boolea
 }
 
 export default function DayScreen() {
-  const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string }>()
+  const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string; gapStart?: string; gapEnd?: string }>()
+  const router = useRouter()
   const timer = useTimer()
   const { colors: tc, snapDragTo, hideSleep, sleepStart, sleepEnd, reduceMotion } = useSettings()
   // Declared before the pinch gesture below, which reads visibleHours.
@@ -535,7 +537,13 @@ export default function DayScreen() {
       setEntrySheetInitialMode('plan')
       setShowEntrySheet(true)
     }
-  }, [params.sheet, params.focusTs])
+    if (params.sheet === 'gap' && params.gapStart && params.gapEnd) {
+      setEntrySheetRange({ startTime: params.gapStart, endTime: params.gapEnd })
+      setEntrySheetDate(toLocalDateStr(new Date(params.gapStart)))
+      setEntrySheetInitialMode('past')
+      setShowEntrySheet(true)
+    }
+  }, [params.sheet, params.focusTs, params.gapStart, params.gapEnd])
 
   useEffect(() => {
     if (initialScrollRequestedRef.current || params.editEntry) return
@@ -1018,6 +1026,20 @@ export default function DayScreen() {
     <View style={[styles.safe, { backgroundColor: tc.bg }]}>
     <GestureDetector gesture={swipeGesture}>
     <View style={{ flex: 1 }}>
+      {/* Day · Tasks segmented header (one tab hosts both surfaces) */}
+      <DayTasksSwitch
+        active="day"
+        onSwitch={() => router.replace('/(tabs)/tasks')}
+        colors={tc}
+        right={
+          <Pressable onPress={() => router.push('/(tabs)/insights')} hitSlop={10}>
+            <Svg width={17} height={17} viewBox="0 0 16 16" fill="none">
+              <Path d="M2 13.5V9M8 13.5V5M14 13.5V2.5" stroke={tc.text4} strokeWidth={1.7} strokeLinecap="round" />
+            </Svg>
+          </Pressable>
+        }
+      />
+
       {/* Date nav */}
       <View style={styles.dateNav}>
         <Pressable onPress={() => changeDate(-1)} style={styles.navEdge} hitSlop={12}>
@@ -3433,13 +3455,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.displayItalic,
     letterSpacing: 0.7,
   },
+  // Secondary now — the Day·Tasks switch above it owns the display size.
   dateTitle: {
     color: colors.text1,
-    fontSize: 24,
-    fontWeight: '700',
-    fontFamily: fonts.displayBold,
-    letterSpacing: -0.36,
-    marginTop: 4,
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: fonts.displaySemiBold,
+    letterSpacing: -0.2,
+    marginTop: 3,
   },
   timeline: { flexDirection: 'row', marginHorizontal: 16, paddingTop: 8 },
   hourCol: { width: 30, position: 'relative', height: BASE_RAIL_HEIGHT },

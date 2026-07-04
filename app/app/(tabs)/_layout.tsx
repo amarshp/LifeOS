@@ -2,7 +2,7 @@ import { View, Text, Pressable, StyleSheet, Animated, Alert, AppState } from 're
 import { Tabs, useFocusEffect, useRouter, usePathname } from 'expo-router'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { colors, fonts } from '../../src/theme/tokens'
-import { HomeIcon, DayIcon, TasksIcon, InsightsIcon, SettingsIcon, NumberIcon, PlanIcon } from '../../src/components/TabIcons'
+import { HomeIcon, DayIcon, NumberIcon, PlanIcon } from '../../src/components/TabIcons'
 import { useTimer, formatElapsed } from '../../src/hooks/useTimer'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import * as categoriesService from '../../src/services/categories'
@@ -226,14 +226,14 @@ export default function TabLayout() {
         <Tabs.Screen
           name="test3"
           options={{
-            title: 'Home',
+            title: 'Now',
             tabBarIcon: ({ color }) => <HomeIcon color={color as string} size={22} />,
           }}
         />
         <Tabs.Screen
           name="day"
           options={{
-            title: 'Day',
+            title: 'Day · Tasks',
             tabBarIcon: ({ color }) => <DayIcon color={color as string} size={22} />,
           }}
         />
@@ -244,27 +244,10 @@ export default function TabLayout() {
             tabBarIcon: ({ color }) => <PlanIcon color={color as string} size={22} />,
           }}
         />
-        <Tabs.Screen
-          name="tasks"
-          options={{
-            title: 'Tasks',
-            tabBarIcon: ({ color }) => <TasksIcon color={color as string} size={22} />,
-          }}
-        />
-        <Tabs.Screen
-          name="insights"
-          options={{
-            title: 'Insights',
-            tabBarIcon: ({ color }) => <InsightsIcon color={color as string} size={22} />,
-          }}
-        />
-        <Tabs.Screen
-          name="settings"
-          options={{
-            title: 'Settings',
-            tabBarIcon: ({ color }) => <SettingsIcon color={color as string} size={22} />,
-          }}
-        />
+        {/* Kept as routes (deep links, segmented switch, gear) but off the bar. */}
+        <Tabs.Screen name="tasks" options={{ href: null }} />
+        <Tabs.Screen name="insights" options={{ href: null }} />
+        <Tabs.Screen name="settings" options={{ href: null }} />
       </Tabs>
     </SafeAreaView>
   )

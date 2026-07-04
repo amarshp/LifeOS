@@ -1,11 +1,23 @@
 import { View, Text, ScrollView, Pressable, StyleSheet, Animated } from 'react-native'
 import { useRef, useEffect } from 'react'
+import Svg, { Path, Circle } from 'react-native-svg'
 import { fonts } from '../../src/theme/tokens'
 import { useHomeData } from '../../src/hooks/useHomeData'
 import { formatElapsed } from '../../src/hooks/useTimer'
 import { relativeTime, formatHours } from '../../src/lib/format'
 import { toLocalDateStr } from '../../src/lib/date'
 import type { TimeEntry, Category } from '../../src/types/database'
+
+const GAP_CARD_MIN_MS = 30 * 60_000 // untracked stretch worth asking about
+const DRIFT_CARD_MIN_MS = 45 * 60_000 // plan this far behind → offer replan
+
+function fmtDurationShort(ms: number): string {
+  const mins = Math.round(ms / 60_000)
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  if (h === 0) return `${m}m`
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
+}
 
 /**
  * test3 — "The Monolith"
@@ -17,12 +29,34 @@ export default function Test3Screen() {
   const {
     router, timer, now, colors: tc,
     categories, running, currentEntry, currentCategory,
-    nextBlock, timelineEntries, trackedMs, plannedMs, elapsed, quote,
+    todayBlocks, nextBlock, timelineEntries, trackedMs, plannedMs, elapsed, quote,
     quickStartCategories, reviewCount,
   } = useHomeData()
 
   const secondEntry = running[1]
   const secondCategory = categories.find(c => c.id === secondEntry?.category_id)
+
+  // ── State cards: show at most one calm prompt when something needs repair ──
+  const nowMs = now.getTime()
+
+  // Tracking gap: idle + the last completed entry ended a while ago.
+  const lastEndMs = timelineEntries.reduce((max, e) => {
+    if (!e.end_time) return max
+    const end = new Date(e.end_time).getTime()
+    return Number.isFinite(end) && end <= nowMs && end > max ? end : max
+  }, 0)
+  const gapMs = !currentEntry && lastEndMs > 0 ? nowMs - lastEndMs : 0
+  const showGapCard = gapMs >= GAP_CARD_MIN_MS
+
+  // Plan drift: planned time that should already have happened vs tracked time.
+  const plannedSoFarMs = todayBlocks.reduce((sum, b) => {
+    const bs = new Date(b.start_time).getTime()
+    const be = new Date(b.end_time).getTime()
+    if (!Number.isFinite(bs) || !Number.isFinite(be)) return sum
+    return sum + Math.max(0, Math.min(be, nowMs) - bs)
+  }, 0)
+  const driftMs = plannedSoFarMs - trackedMs
+  const showDriftCard = !showGapCard && driftMs >= DRIFT_CARD_MIN_MS
 
   const openEntry = (entryId: string) =>
     router.push({
@@ -49,6 +83,18 @@ export default function Test3Screen() {
 
   return (
     <View style={[styles.safe, { backgroundColor: tc.bg }]}>
+      {/* Settings — off the tab bar, behind a quiet gear */}
+      <Pressable
+        onPress={() => router.push('/(tabs)/settings')}
+        style={styles.gear}
+        hitSlop={12}
+      >
+        <Svg width={18} height={18} viewBox="0 0 16 16" fill="none">
+          <Path d="M2 5h12M2 11h12" stroke={tc.text4} strokeWidth={1.4} strokeLinecap="round" />
+          <Circle cx={6} cy={5} r={2} fill={tc.bg} stroke={tc.text4} strokeWidth={1.4} />
+          <Circle cx={10} cy={11} r={2} fill={tc.bg} stroke={tc.text4} strokeWidth={1.4} />
+        </Svg>
+      </Pressable>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <Text style={[styles.date, { color: tc.text3 }]}>
           {now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} · {now.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()}
@@ -110,6 +156,38 @@ export default function Test3Screen() {
           <DayLine entries={timelineEntries} categories={categories} now={now} trackColor={tc.border} nowColor={tc.text1} fallback={tc.text3} />
           <Text style={[styles.dayStat, { color: tc.text3 }]}>{formatHours(trackedMs)} of {formatHours(plannedMs)} h</Text>
         </View>
+
+        {/* State cards — at most one calm prompt */}
+        {showGapCard && (
+          <Pressable
+            onPress={() => router.push({
+              pathname: '/(tabs)/day',
+              params: {
+                sheet: 'gap',
+                gapStart: new Date(lastEndMs).toISOString(),
+                gapEnd: new Date(nowMs).toISOString(),
+                focusTs: String(Date.now()),
+              },
+            })}
+            style={[styles.stateCard, { borderColor: tc.border2 }]}
+          >
+            <Text style={[styles.stateCardText, { color: tc.text2 }]}>
+              {fmtDurationShort(gapMs)} untracked since {new Date(lastEndMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+            </Text>
+            <Text style={[styles.stateCardAction, { color: tc.text3 }]}>Fill it in →</Text>
+          </Pressable>
+        )}
+        {showDriftCard && (
+          <Pressable
+            onPress={() => router.push('/(tabs)/plan')}
+            style={[styles.stateCard, { borderColor: tc.border2 }]}
+          >
+            <Text style={[styles.stateCardText, { color: tc.text2 }]}>
+              Plan is about {fmtDurationShort(driftMs)} behind
+            </Text>
+            <Text style={[styles.stateCardAction, { color: tc.text3 }]}>Replan with Agent →</Text>
+          </Pressable>
+        )}
 
         {/* One quiet next line */}
         {nextBlock && (
@@ -236,6 +314,21 @@ const styles = StyleSheet.create({
 
   nextLine: { marginTop: 44 },
   nextText: { fontSize: 13.5, letterSpacing: 0.3, fontFamily: fonts.ui },
+
+  gear: { position: 'absolute', top: 16, right: 20, zIndex: 10, padding: 4 },
+  stateCard: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    marginTop: 32,
+  },
+  stateCardText: { fontSize: 13, fontFamily: fonts.ui, letterSpacing: 0.2 },
+  stateCardAction: { fontSize: 12, fontFamily: fonts.ui },
 
   quickStartRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 20, marginTop: 36 },
   quickChip: { flexDirection: 'row', alignItems: 'center', gap: 7 },
