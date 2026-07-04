@@ -243,7 +243,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="day"
           options={{
-            title: 'Day · Tasks',
+            title: 'Schedule',
             tabBarIcon: ({ color }) => <DayIcon color={color as string} size={22} />,
           }}
         />

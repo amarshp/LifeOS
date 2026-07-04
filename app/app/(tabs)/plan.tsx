@@ -39,6 +39,8 @@ import {
   type ProposedPlan,
 } from '../../src/services/plan-chat'
 import * as calendarBlocksService from '../../src/services/calendar-blocks'
+import * as chatSessionsService from '../../src/services/chat-sessions'
+import type { ChatSession } from '../../src/services/chat-sessions'
 
 const ACCENT = '#C8102E'
 
@@ -74,6 +76,10 @@ export default function PlanScreen() {
   const [planDiff, setPlanDiff] = useState<Map<number, 'new' | 'moved' | 'kept'>>(new Map())
   const [droppedTitles, setDroppedTitles] = useState<string[]>([])
   const [lastUndo, setLastUndo] = useState<ApplyUndo | null>(null)
+  // Persistent sessions: the current one (created on first turn, updated every
+  // turn) + the recent list shown while the chat is empty.
+  const sessionIdRef = useRef<string | null>(null)
+  const [recentSessions, setRecentSessions] = useState<ChatSession[]>([])
 
   const recorder = useAudioRecorder(SPEECH_RECORDING)
   const recorderState = useAudioRecorderState(recorder)
@@ -86,7 +92,9 @@ export default function PlanScreen() {
   }, [messages])
 
   useEffect(() => {
-    setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {})
+    // Playback-first: record mode is entered only while the mic is held
+    // (a session left in record mode delays TTS by seconds on iOS).
+    setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => {})
     return () => {
       tts.stop()
     }
@@ -94,6 +102,51 @@ export default function PlanScreen() {
 
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }))
+  }, [])
+
+  // Recent sessions — refreshed whenever the screen shows the empty state.
+  useEffect(() => {
+    if (messages.length > 0) return
+    chatSessionsService.getRecentSessions().then(setRecentSessions).catch(() => {})
+  }, [messages.length])
+
+  // Persist the conversation after every completed turn (fire-and-forget).
+  const persistSession = useCallback((msgs: ChatMessage[], turnPlan: ProposedPlan | null, forDate: string) => {
+    const run = async () => {
+      if (sessionIdRef.current) {
+        await chatSessionsService.updateSession(sessionIdRef.current, { messages: msgs, plan: turnPlan, date: forDate })
+      } else {
+        sessionIdRef.current = await chatSessionsService.createSession({
+          title: msgs.find((m) => m.role === 'user')?.content ?? 'Chat',
+          date: forDate,
+          messages: msgs,
+          plan: turnPlan,
+        })
+      }
+    }
+    run().catch(() => {})
+  }, [])
+
+  const resumeSession = useCallback((s: ChatSession) => {
+    tts.stop()
+    sessionIdRef.current = s.id
+    setMessages(s.messages)
+    setPlan(s.plan)
+    setDate(s.date)
+    setLastUndo(null)
+    firstPromptRef.current = s.title
+    scrollToEnd()
+  }, [scrollToEnd])
+
+  const newChat = useCallback(() => {
+    tts.stop()
+    sessionIdRef.current = null
+    setMessages([])
+    setPlan(null)
+    setInput('')
+    setLastUndo(null)
+    setDate(todayStr())
+    firstPromptRef.current = ''
   }, [])
 
   // Keep / Move / Drop / Add — label each proposed item against the calendar
@@ -164,9 +217,11 @@ export default function PlanScreen() {
       scrollToEnd()
       try {
         const turn = await sendMessage(effectiveDate, next, expectedSleepHours)
-        setMessages((m) => [...m, { role: 'assistant', content: turn.reply }])
+        const withReply: ChatMessage[] = [...next, { role: 'assistant', content: turn.reply }]
+        setMessages(withReply)
         setPlan(turn.plan)
         setModel(turn.model)
+        persistSession(withReply, turn.plan, effectiveDate)
         // Agent changed real data (timers/blocks) → refresh Home/Day views.
         if (turn.actions.length > 0) emitTimerChange()
         scrollToEnd()
@@ -180,7 +235,7 @@ export default function PlanScreen() {
         scrollToEnd()
       }
     },
-    [date, scrollToEnd, expectedSleepHours],
+    [date, scrollToEnd, expectedSleepHours, persistSession],
   )
 
   // Typed/push-to-talk path: run the turn and read the reply aloud if TTS is on.
@@ -202,6 +257,9 @@ export default function PlanScreen() {
 
   const startHold = useCallback(async () => {
     if (transcribing || sending) return
+    // The user pressed to speak — the agent shuts up IMMEDIATELY, before any
+    // permission/prepare awaits get a chance to delay it.
+    tts.stop()
     holdRef.current = true
     holdStartTsRef.current = Date.now()
     const perm = await AudioModule.requestRecordingPermissionsAsync()
@@ -211,7 +269,7 @@ export default function PlanScreen() {
       return
     }
     if (!holdRef.current) return // released before permission resolved
-    tts.stop()
+    await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {})
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     await recorder.prepareToRecordAsync()
     if (!holdRef.current) return
@@ -227,6 +285,9 @@ export default function PlanScreen() {
     } catch {
       /* never started */
     }
+    // Leave record mode right away — a session stuck in record makes the
+    // reply's TTS start seconds late (and quiet) on iOS.
+    await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => {})
     if (heldMs < 500) return // accidental tap — nothing worth transcribing
     try {
       setTranscribing(true)
@@ -287,6 +348,7 @@ export default function PlanScreen() {
     setPlan(null)
     setInput('')
     setLastUndo(null)
+    sessionIdRef.current = null
     firstPromptRef.current = ''
   }, [])
 
@@ -327,6 +389,13 @@ export default function PlanScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text1 }]}>Agent</Text>
+        {messages.length > 0 && (
+          <Pressable onPress={newChat} hitSlop={10} style={styles.iconBtn}>
+            <Svg width={19} height={19} viewBox="0 0 24 24" fill="none">
+              <Path d="M12 5v14M5 12h14" stroke={colors.text4} strokeWidth={1.8} strokeLinecap="round" />
+            </Svg>
+          </Pressable>
+        )}
         <Pressable onPress={() => router.push('/brain')} hitSlop={10} style={styles.iconBtn}>
           <EyeIcon color={colors.text4} />
         </Pressable>
@@ -348,6 +417,7 @@ export default function PlanScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {messages.length === 0 && (
+          <View style={styles.emptyWrap}>
           <View style={styles.empty}>
             <Text style={[styles.emptyTitle, { color: colors.text2 }]}>Plan your day, out loud or by text</Text>
             <Text style={[styles.emptyBody, { color: colors.text3 }]}>
@@ -373,6 +443,38 @@ export default function PlanScreen() {
                 </Pressable>
               ))}
             </View>
+          </View>
+
+          {/* Recent chats — stacked from the bottom, newest nearest the input.
+              Tap to resume; just type/talk below for a fresh one. */}
+          {recentSessions.length > 0 && (
+            <View style={styles.sessionList}>
+              <Text style={[styles.sessionEyebrow, { color: colors.text4 }]}>Recent chats</Text>
+              {[...recentSessions].reverse().map((s) => (
+                <Pressable
+                  key={s.id}
+                  onPress={() => resumeSession(s)}
+                  style={[styles.sessionRow, { borderTopColor: colors.border }]}
+                >
+                  <View style={styles.sessionMain}>
+                    <Text style={[styles.sessionTitle, { color: colors.text2 }]} numberOfLines={1}>{s.title}</Text>
+                    <Text style={[styles.sessionMeta, { color: colors.text4 }]}>
+                      {fmtDate(s.date)} · {s.messages.length} msgs
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      setRecentSessions(prev => prev.filter(x => x.id !== s.id))
+                      chatSessionsService.deleteSession(s.id).catch(() => {})
+                    }}
+                    hitSlop={10}
+                  >
+                    <Text style={{ color: colors.text4, fontSize: 11 }}>✕</Text>
+                  </Pressable>
+                </Pressable>
+              ))}
+            </View>
+          )}
           </View>
         )}
 
@@ -464,7 +566,7 @@ export default function PlanScreen() {
           placeholder="Message your planner…"
           placeholderTextColor={colors.text4}
           value={input}
-          onChangeText={setInput}
+          onChangeText={(t) => { tts.stop(); setInput(t) }}
           multiline
           editable={!busy}
           onSubmitEditing={() => send(input)}
@@ -575,8 +677,30 @@ const styles = StyleSheet.create({
   dateArrow: { paddingHorizontal: 8 },
   arrow: { fontSize: 26, fontWeight: '600' },
   dateLabel: { fontSize: 14, fontFamily: fonts.displaySemiBold, fontWeight: '600', letterSpacing: -0.2 },
-  chat: { padding: 16, paddingBottom: 24, gap: 10 },
+  chat: { padding: 16, paddingBottom: 24, gap: 10, flexGrow: 1 },
   empty: { paddingVertical: 40, paddingHorizontal: 8, gap: 10 },
+  // Empty state fills the scroll area so recent chats can sit at the bottom.
+  emptyWrap: { flex: 1, justifyContent: 'space-between' },
+  sessionList: { paddingBottom: 4 },
+  sessionEyebrow: {
+    fontSize: 10.5,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: fonts.ui,
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  sessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderTopWidth: 1,
+  },
+  sessionMain: { flex: 1, minWidth: 0, gap: 2 },
+  sessionTitle: { fontSize: 13.5, fontFamily: fonts.ui },
+  sessionMeta: { fontSize: 11, fontFamily: fonts.ui },
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 14 },
   quickChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
   quickChipTxt: { fontSize: 13, fontFamily: fonts.ui, fontWeight: '500' },
