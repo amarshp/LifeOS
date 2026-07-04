@@ -171,7 +171,9 @@ export default function Test3Screen() {
         {/* Hair-thin day line */}
         <View style={styles.dayLineWrap}>
           <DayLine entries={timelineEntries} categories={categories} now={now} trackColor={tc.border} nowColor={tc.text1} fallback={tc.text3} />
-          <Text style={[styles.dayStat, { color: tc.text3 }]}>{formatHours(trackedMs)} of {formatHours(plannedMs)} h</Text>
+          <Text style={[styles.dayStat, { color: tc.text3 }]}>
+            {plannedMs > 0 ? `${formatHours(trackedMs)} of ${formatHours(plannedMs)} h planned` : `${formatHours(trackedMs)} h tracked`}
+          </Text>
         </View>
 
         {/* State cards — at most one calm prompt */}

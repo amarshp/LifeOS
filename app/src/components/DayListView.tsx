@@ -74,6 +74,7 @@ export function DayListView({ date, entries, running, categories, now, colors: t
       const startMs = new Date(e.start_time).getTime()
       const endMs = e.end_time ? new Date(e.end_time).getTime() : nowMs
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue
+      if (endMs < startMs) continue // corrupted entry (end before start) — don't render nonsense
       if (endMs <= dayStart || startMs >= dayEnd) continue // no overlap with this day
       entryRows.push({ kind: 'entry', entry: e, startMs, endMs, isRunning: !e.end_time })
     }
