@@ -12,6 +12,7 @@ import {
   Alert,
 } from 'react-native'
 import { useRouter } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Svg, { Path, Rect } from 'react-native-svg'
 import {
@@ -71,7 +72,21 @@ export default function PlanScreen() {
   const [applying, setApplying] = useState(false)
   const [plan, setPlan] = useState<ProposedPlan | null>(null)
   const [model, setModel] = useState('gpt-4o-mini')
-  const [ttsOn, setTtsOn] = useState(true)
+  // Voice replies are opt-in (sticky) — silent by default.
+  const [ttsOn, setTtsOnState] = useState(false)
+  const setTtsOn = useCallback((update: (v: boolean) => boolean) => {
+    setTtsOnState(prev => {
+      const next = update(prev)
+      AsyncStorage.setItem('@lifeos_tts', next ? '1' : '0').catch(() => {})
+      if (!next) tts.stop()
+      return next
+    })
+  }, [])
+  useEffect(() => {
+    AsyncStorage.getItem('@lifeos_tts').then(v => {
+      if (v === '1') setTtsOnState(true)
+    }).catch(() => {})
+  }, [])
   // Diff of the proposal vs what's on the calendar now: item index → status,
   // plus future blocks the proposal would drop. Recomputed when a plan lands.
   const [planDiff, setPlanDiff] = useState<Map<number, 'new' | 'moved' | 'kept'>>(new Map())
