@@ -414,3 +414,6 @@ verify_jwt = false
 # client path re-verifies the user JWT itself.
 [functions.brain]
 verify_jwt = false
+
+[functions.install-page]
+verify_jwt = false
