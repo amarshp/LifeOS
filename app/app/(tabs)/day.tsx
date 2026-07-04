@@ -16,6 +16,9 @@ import {
 } from 'react-native'
 import { useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import Svg, { Path, Rect } from 'react-native-svg'
+import { DayListView } from '../../src/components/DayListView'
 import { colors, spacing, fonts, radii } from '../../src/theme/tokens'
 import { toLocalDateStr } from '../../src/lib/date'
 import { getVisiblePlannedBlocks } from '../../src/lib/planned-blocks'
@@ -334,6 +337,8 @@ export default function DayScreen() {
   const [entrySheetInitialMode, setEntrySheetInitialMode] = useState<'timer' | 'past' | 'plan'>('timer')
   const [editingBlock, setEditingBlock] = useState<CalendarBlock | null>(null)
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null)
+  // Timeline (proportional) ↔ List (fixed-height Toggl-style rows). Sticky.
+  const [viewMode, setViewMode] = useState<'timeline' | 'list'>('timeline')
   const [undo, setUndo] = useState<{ kind: 'entry' | 'block'; id: string; label: string } | null>(null)
   const [zoom, setZoom] = useState(1)
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -759,6 +764,27 @@ export default function DayScreen() {
     setShowEntrySheet(true)
   }, [dateStr])
 
+  useEffect(() => {
+    AsyncStorage.getItem('@lifeos_day_view').then(v => {
+      if (v === 'list' || v === 'timeline') setViewMode(v)
+    }).catch(() => {})
+  }, [])
+
+  const toggleViewMode = useCallback(() => {
+    setViewMode(prev => {
+      const next = prev === 'timeline' ? 'list' : 'timeline'
+      AsyncStorage.setItem('@lifeos_day_view', next).catch(() => {})
+      return next
+    })
+  }, [])
+
+  const openGapFill = useCallback((startIso: string, endIso: string) => {
+    setEntrySheetRange({ startTime: startIso, endTime: endIso })
+    setEntrySheetDate(toLocalDateStr(new Date(startIso)))
+    setEntrySheetInitialMode('past')
+    setShowEntrySheet(true)
+  }, [])
+
   const closeEntrySheet = useCallback(() => {
     setShowEntrySheet(false)
     setEntrySheetRange(null)
@@ -1018,7 +1044,19 @@ export default function DayScreen() {
         </Pressable>
       </View>
 
-      {/* Timeline */}
+      {/* Timeline ↔ List */}
+      {viewMode === 'list' ? (
+        <DayListView
+          date={dateStr}
+          entries={entries}
+          running={timer.running}
+          categories={categories}
+          now={now}
+          colors={tc}
+          onEntryPress={setEditingEntry}
+          onGapPress={openGapFill}
+        />
+      ) : (
       <GestureDetector gesture={pinchGesture}>
       <View style={{ flex: 1 }}>
       <ScrollView
@@ -1248,8 +1286,29 @@ export default function DayScreen() {
       </ScrollView>
       </View>
       </GestureDetector>
+      )}
     </View>
     </GestureDetector>
+
+      {/* View-mode toggle — quiet ghost button above the FAB */}
+      <Pressable
+        onPress={toggleViewMode}
+        style={[styles.viewToggle, { borderColor: tc.border3, backgroundColor: tc.bg }]}
+        hitSlop={8}
+      >
+        {viewMode === 'timeline' ? (
+          // switch to list → rows glyph
+          <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
+            <Path d="M2 4h12M2 8h12M2 12h8" stroke={tc.text3} strokeWidth={1.6} strokeLinecap="round" />
+          </Svg>
+        ) : (
+          // switch to timeline → column glyph
+          <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
+            <Rect x={6} y={2} width={4} height={5} rx={1} stroke={tc.text3} strokeWidth={1.4} />
+            <Rect x={6} y={9} width={4} height={5} rx={1} stroke={tc.text3} strokeWidth={1.4} />
+          </Svg>
+        )}
+      </Pressable>
 
       <FABs onPress={openNewTimerSheet} />
 
@@ -3322,6 +3381,17 @@ const editStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
+  viewToggle: {
+    position: 'absolute',
+    bottom: 96,
+    right: 27,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dateNav: {
     flexDirection: 'row',
     alignItems: 'center',
