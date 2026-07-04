@@ -38,12 +38,12 @@ workflows:
         script: |
           cd app
           npm ci
-      - name: Build iOS dev client locally (does NOT use an EAS cloud credit)
+      - name: Build iOS preview (standalone) locally — no EAS cloud credit
         script: |
           cd app
           npx eas-cli build \
             --platform ios \
-            --profile development \
+            --profile preview \
             --local \
             --non-interactive \
             --output "$CM_BUILD_DIR/app/build/LifeOS.ipa"
