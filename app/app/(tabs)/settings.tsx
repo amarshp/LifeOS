@@ -64,7 +64,7 @@ function formatSleepHours(h: number): string {
   return Number.isInteger(h) ? `${h} h` : `${h.toFixed(1)} h`
 }
 
-type SheetName = 'categories' | 'tags' | 'quickStart' | 'weekStart' | 'snap' | 'export' | 'sleepStart' | 'sleepEnd' | 'expectedSleep' | null
+type SheetName = 'categories' | 'tags' | 'quickStart' | 'weekStart' | 'snap' | 'export' | 'sleepStart' | 'sleepEnd' | 'expectedSleep' | 'sttVocab' | null
 type ExportFormat = 'json' | 'csv'
 
 interface ExportSnapshot {
@@ -255,7 +255,7 @@ export default function SettingsScreen() {
   const [activeSheet, setActiveSheet] = useState<SheetName>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [tags, setTags] = useState<Tag[]>([])
-  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs | null>(null)
+  const [notifPrefs, setNotifPrefs] = useState<userSettingsService.UserSettings | null>(null)
 
   const loadData = useCallback(async () => {
     const [cats, allTags] = await Promise.all([
@@ -467,6 +467,11 @@ export default function SettingsScreen() {
           <SettingsRow label="Simultaneous timers">
             <ToggleSwitch on={settings.allowParallelTimers} onToggle={() => settings.setAllowParallelTimers(!settings.allowParallelTimers)} />
           </SettingsRow>
+          <SettingsRow
+            label="Voice vocabulary"
+            sub={notifPrefs ? `${notifPrefs.stt_vocabulary.length} names` : '—'}
+            onPress={() => setActiveSheet('sttVocab')}
+          />
         </SettingsSection>
 
         <SettingsSection title="06 - Account">
@@ -546,7 +551,53 @@ export default function SettingsScreen() {
         onSelect={settings.setExpectedSleepHours}
         onClose={() => setActiveSheet(null)}
       />
+      <VocabSheet
+        visible={activeSheet === 'sttVocab'}
+        words={notifPrefs?.stt_vocabulary ?? []}
+        onSave={(words) => {
+          setNotifPrefs(prev => (prev ? { ...prev, stt_vocabulary: words } : prev))
+          userSettingsService.setSttVocabulary(words).catch(err => showError(err, 'Could not save vocabulary'))
+        }}
+        onClose={() => setActiveSheet(null)}
+      />
     </View>
+  )
+}
+
+// Comma-separated editor for the voice vocabulary (names of people, places,
+// projects) — biases transcription and enrichment toward correct spellings.
+function VocabSheet({ visible, words, onSave, onClose }: {
+  visible: boolean
+  words: string[]
+  onSave: (words: string[]) => void
+  onClose: () => void
+}) {
+  const { colors: tc } = useSettings()
+  const [text, setText] = useState('')
+  useEffect(() => {
+    if (visible) setText(words.join(', '))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible])
+  return (
+    <SheetFrame
+      visible={visible}
+      title="Voice vocabulary"
+      subtitle="Names you actually say — people, places, projects. Comma-separated."
+      onClose={() => {
+        onSave(text.split(',').map(w => w.trim()).filter(Boolean))
+        onClose()
+      }}
+    >
+      <TextInput
+        style={[s.vocabInput, { backgroundColor: tc.surface1, color: tc.text1, borderColor: tc.border }]}
+        placeholder="Samkeet, California Burrito, LifeOS…"
+        placeholderTextColor={tc.text4}
+        value={text}
+        onChangeText={setText}
+        multiline
+        autoCorrect={false}
+      />
+    </SheetFrame>
   )
 }
 
@@ -1450,6 +1501,16 @@ const s = StyleSheet.create({
 
   choiceList: {
     gap: 8,
+  },
+  vocabInput: {
+    minHeight: 120,
+    maxHeight: 220,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    fontSize: 14.5,
+    fontFamily: fonts.ui,
+    textAlignVertical: 'top',
   },
   choiceRow: {
     minHeight: 58,

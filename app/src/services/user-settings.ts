@@ -16,10 +16,12 @@ export interface NotificationPrefs {
 
 export interface UserSettings extends NotificationPrefs {
   allow_parallel_timers: boolean
+  stt_vocabulary: string[] // names of people/places/projects for voice + enrichment
 }
 
 const DEFAULTS: UserSettings = {
   allow_parallel_timers: false,
+  stt_vocabulary: [],
   notif_plan_enabled: true,
   notif_plan_offsets_min: [5],
   notif_task_enabled: true,
@@ -30,7 +32,7 @@ const DEFAULTS: UserSettings = {
 }
 
 const COLUMNS =
-  'allow_parallel_timers, notif_plan_enabled, notif_plan_offsets_min, notif_task_enabled, notif_task_offsets_min, notif_plan_tomorrow_hhmm, quiet_hours_start, quiet_hours_end'
+  'allow_parallel_timers, stt_vocabulary, notif_plan_enabled, notif_plan_offsets_min, notif_task_enabled, notif_task_offsets_min, notif_plan_tomorrow_hhmm, quiet_hours_start, quiet_hours_end'
 
 export async function getUserSettings(): Promise<UserSettings> {
   const { data, error } = await supabase
@@ -41,6 +43,7 @@ export async function getUserSettings(): Promise<UserSettings> {
   const row = data as Record<string, unknown>
   return {
     allow_parallel_timers: row.allow_parallel_timers === true,
+    stt_vocabulary: Array.isArray(row.stt_vocabulary) ? (row.stt_vocabulary as string[]) : [],
     notif_plan_enabled: row.notif_plan_enabled !== false,
     notif_plan_offsets_min: Array.isArray(row.notif_plan_offsets_min) ? (row.notif_plan_offsets_min as number[]) : DEFAULTS.notif_plan_offsets_min,
     notif_task_enabled: row.notif_task_enabled !== false,
@@ -66,6 +69,11 @@ export async function setAllowParallelTimers(value: boolean): Promise<void> {
 
 export async function updateNotificationPrefs(patch: Partial<NotificationPrefs>): Promise<void> {
   await upsertSettings(patch)
+}
+
+export async function setSttVocabulary(words: string[]): Promise<void> {
+  const clean = [...new Set(words.map((w) => w.trim()).filter(Boolean))]
+  await upsertSettings({ stt_vocabulary: clean })
 }
 
 /** Keep the server-side timezone current — the brain schedules by local clock. */

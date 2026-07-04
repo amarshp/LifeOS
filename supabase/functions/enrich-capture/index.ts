@@ -66,10 +66,11 @@ Deno.serve(async (req) => {
   if (!row) return json({ ok: true, note: 'row gone' })
   if (rawTitle && row.title !== rawTitle) return json({ ok: true, note: 'title changed since capture — leaving it alone' })
 
-  const [{ data: categories }, { data: tagRows }, { data: recent }] = await Promise.all([
+  const [{ data: categories }, { data: tagRows }, { data: recent }, { data: settings }] = await Promise.all([
     admin.from('categories').select('id, name, kind').eq('user_id', row.user_id).is('deleted_at', null).order('sort_order'),
     admin.from('tags').select('name').eq('user_id', row.user_id).is('deleted_at', null).limit(60),
     admin.from('time_entries').select('title').eq('user_id', row.user_id).is('deleted_at', null).order('start_time', { ascending: false }).limit(12),
+    admin.from('user_settings').select('stt_vocabulary').eq('user_id', row.user_id).maybeSingle(),
   ])
   if (!categories || categories.length === 0) return json({ ok: true, note: 'no categories' })
 
@@ -86,6 +87,8 @@ CATEGORIES:
 ${categories.map((c) => `- ${c.name} (${c.kind}) → ${c.id}`).join('\n')}
 
 EXISTING TAGS: ${(tagRows ?? []).map((t) => t.name).join(', ') || '(none)'}
+
+KNOWN NAMES (people/places/projects the user actually means — correct mis-hearings TOWARD these): ${((settings?.stt_vocabulary as string[] | null) ?? []).join(', ') || '(none)'}
 
 RECENT ENTRY TITLES (style/consistency reference): ${(recent ?? []).map((r) => `"${r.title}"`).join(', ')}`
 

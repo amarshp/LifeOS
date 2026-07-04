@@ -10,6 +10,8 @@
 // lower latency than whisper-1 (the "Transcribing…" wait the user flagged).
 const MODEL = 'gpt-4o-mini-transcribe'
 
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 interface Body {
   audio_base64?: string
   mime?: string // e.g. "audio/m4a"
@@ -59,11 +61,42 @@ Deno.serve(async (req) => {
     return json({ error: 'bad base64' }, 400)
   }
 
+  // Vocabulary bias: the user's own names (people/places/projects) + their
+  // category and tag vocabulary steer the model toward the right spellings.
+  let vocabPrompt = ''
+  try {
+    const url = Deno.env.get('SUPABASE_URL')
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
+    const authHeader = req.headers.get('Authorization')
+    if (url && anonKey && authHeader) {
+      const supabase = createClient(url, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false },
+      })
+      const [{ data: settings }, { data: cats }, { data: tags }] = await Promise.all([
+        supabase.from('user_settings').select('stt_vocabulary').maybeSingle(),
+        supabase.from('categories').select('name').is('deleted_at', null),
+        supabase.from('tags').select('name').is('deleted_at', null).limit(40),
+      ])
+      const words = [
+        ...((settings?.stt_vocabulary as string[] | null) ?? []),
+        ...((cats ?? []).map((c) => c.name as string)),
+        ...((tags ?? []).map((t) => t.name as string)),
+      ].filter(Boolean)
+      if (words.length > 0) {
+        vocabPrompt = `Vocabulary that may appear: ${[...new Set(words)].join(', ')}.`
+      }
+    }
+  } catch {
+    // vocabulary is a nice-to-have — transcribe without it
+  }
+
   const mime = body.mime || 'audio/m4a'
   const filename = body.filename || 'speech.m4a'
   const form = new FormData()
   form.append('file', new Blob([bytes], { type: mime }), filename)
   form.append('model', MODEL)
+  if (vocabPrompt) form.append('prompt', vocabPrompt)
 
   let res: Response
   try {
