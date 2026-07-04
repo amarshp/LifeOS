@@ -404,6 +404,7 @@ interface ToolCtx {
   // so a hallucinated id can never hit someone's real row.
   allowedEntryIds: Set<string>
   allowedBlockIds: Set<string>
+  allowParallel: boolean // user_settings.allow_parallel_timers (default false)
   actions: string[]
 }
 
@@ -530,12 +531,15 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       // Atomic switch: one current activity. Any still-running timer is stopped
       // at the new timer's start (clean handoff, gap-free timeline). Backfill
       // flows should still stop stale timers at their TRUE end first — this is
-      // the safety net, not the primary path.
-      const { data: running } = await supabase
-        .from('time_entries')
-        .select('id, title, todo_id, start_time')
-        .eq('is_running', true)
-        .is('deleted_at', null)
+      // the safety net, not the primary path. Skipped when the user has
+      // parallel timers enabled (the DB trigger caps at 2 in that mode).
+      const { data: running } = ctx.allowParallel
+        ? { data: [] as Array<{ id: string; title: string; todo_id: string | null; start_time: string }> }
+        : await supabase
+            .from('time_entries')
+            .select('id, title, todo_id, start_time')
+            .eq('is_running', true)
+            .is('deleted_at', null)
       for (const r of running ?? []) {
         // Stop at the new timer's start; if that predates the running entry,
         // fall back to now; a future-dated running entry (bad earlier backfill)
@@ -953,7 +957,7 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await supabase.auth.getUser()
   if (userErr || !userData.user) return json({ error: 'unauthorized' }, 401)
 
-  const [{ data: categories }, { data: blocks }, { data: todos }] = await Promise.all([
+  const [{ data: categories }, { data: blocks }, { data: todos }, { data: settingsRow }] = await Promise.all([
     supabase.from('categories').select('id, name, kind').is('deleted_at', null).order('sort_order'),
     supabase
       .from('calendar_blocks')
@@ -967,6 +971,7 @@ Deno.serve(async (req) => {
       .eq('status', 'open')
       .is('deleted_at', null)
       .order('priority', { ascending: false }),
+    supabase.from('user_settings').select('allow_parallel_timers').maybeSingle(),
   ])
 
   const cats = (categories ?? []) as Array<{ id: string; name: string; kind: string }>
@@ -990,6 +995,7 @@ Deno.serve(async (req) => {
     allowedTodoIds, // same set instance — add_todo grows it, so the final plan filter accepts new tasks
     allowedEntryIds: new Set<string>(),
     allowedBlockIds: new Set<string>(),
+    allowParallel: settingsRow?.allow_parallel_timers === true,
     actions: [],
   }
 
