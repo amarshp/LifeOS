@@ -148,6 +148,7 @@ export async function materializePlan(
       tags: item.tags,
       notes: item.notes,
       todo_id: item.todo_id,
+      flexibility: item.flexibility,
     })
     await updatePlanItem(item.id, { calendar_block_id: block.id })
     created++

@@ -39,6 +39,7 @@ export interface ProposedItem {
   end_time: string // "HH:MM"
   category_id: string | null
   todo_id: string | null
+  flexibility?: 'fixed' | 'flexible' | 'protected'
   notes: string | null
 }
 
@@ -128,15 +129,28 @@ function hhmm(value: string): { h: number; m: number } {
  * now are torn down — the morning that already happened stays on the timeline.
  * (For future dates nothing has happened yet, so everything is replaced.)
  */
+export interface ApplyUndo {
+  /** New AI plan created by this apply (delete it + its blocks to undo). */
+  newPlanId: string
+  /** Blocks that were soft-deleted by the teardown (restore them to undo). */
+  deletedBlockIds: string[]
+}
+
+export interface ApplyResult {
+  created: number
+  undo: ApplyUndo
+}
+
 export async function applyChatPlan(
   date: string,
   plan: ProposedPlan,
   model: string,
   prompt: string,
-): Promise<number> {
+): Promise<ApplyResult> {
   // 1. Tear down prior AI plans for this date + their materialized blocks.
   const cutoffIso = date === todayStr() ? new Date().toISOString() : null
   const existing = (await getPlansForDate(date)).filter((p) => p.source === 'ai')
+  const deletedBlockIds: string[] = []
   for (const old of existing) {
     const items = await getPlanItems(old.id)
     let kept = 0
@@ -147,6 +161,7 @@ export async function applyChatPlan(
       }
       if (it.calendar_block_id) {
         await calendarBlocksService.deleteBlock(it.calendar_block_id)
+        deletedBlockIds.push(it.calendar_block_id)
       }
       await deletePlanItem(it.id)
     }
@@ -180,6 +195,7 @@ export async function applyChatPlan(
       tags: [],
       notes: item.notes ?? null,
       todo_id: item.todo_id ?? null,
+      flexibility: item.flexibility ?? 'flexible',
       sort_order: sortOrder++,
     })
   }
@@ -187,5 +203,22 @@ export async function applyChatPlan(
   // 4. Materialize into calendar_blocks (what Day/Week/Home render). Items the
   // model couldn't categorize land in the fallback category instead of being
   // silently dropped.
-  return materializePlan(created.id, date, await fallbackCategoryId())
+  const created2 = await materializePlan(created.id, date, await fallbackCategoryId())
+  return { created: created2, undo: { newPlanId: created.id, deletedBlockIds } }
+}
+
+/**
+ * Revert the most recent Apply: remove the plan (and blocks) it created and
+ * restore the blocks its teardown soft-deleted.
+ */
+export async function undoApply(undo: ApplyUndo): Promise<void> {
+  const items = await getPlanItems(undo.newPlanId)
+  for (const it of items) {
+    if (it.calendar_block_id) await calendarBlocksService.deleteBlock(it.calendar_block_id)
+    await deletePlanItem(it.id)
+  }
+  await deletePlan(undo.newPlanId)
+  for (const id of undo.deletedBlockIds) {
+    await calendarBlocksService.restoreBlock(id)
+  }
 }

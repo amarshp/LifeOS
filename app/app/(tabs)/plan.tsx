@@ -32,10 +32,13 @@ import {
   sendMessage,
   transcribe,
   applyChatPlan,
+  undoApply,
+  type ApplyUndo,
   type ChatMessage,
   type ChatTurn,
   type ProposedPlan,
 } from '../../src/services/plan-chat'
+import * as calendarBlocksService from '../../src/services/calendar-blocks'
 
 const ACCENT = '#C8102E'
 
@@ -66,6 +69,11 @@ export default function PlanScreen() {
   const [plan, setPlan] = useState<ProposedPlan | null>(null)
   const [model, setModel] = useState('gpt-4o-mini')
   const [ttsOn, setTtsOn] = useState(true)
+  // Diff of the proposal vs what's on the calendar now: item index → status,
+  // plus future blocks the proposal would drop. Recomputed when a plan lands.
+  const [planDiff, setPlanDiff] = useState<Map<number, 'new' | 'moved' | 'kept'>>(new Map())
+  const [droppedTitles, setDroppedTitles] = useState<string[]>([])
+  const [lastUndo, setLastUndo] = useState<ApplyUndo | null>(null)
 
   const recorder = useAudioRecorder(SPEECH_RECORDING)
   const recorderState = useAudioRecorderState(recorder)
@@ -87,6 +95,46 @@ export default function PlanScreen() {
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }))
   }, [])
+
+  // Keep / Move / Drop / Add — label each proposed item against the calendar
+  // as it is right now, so Apply is never a surprise.
+  useEffect(() => {
+    if (!plan || plan.items.length === 0) {
+      setPlanDiff(new Map())
+      setDroppedTitles([])
+      return
+    }
+    let alive = true
+    calendarBlocksService.getEffectiveBlocksForDate(date)
+      .then(blocks => {
+        if (!alive) return
+        const nowMs = Date.now()
+        const isToday = date === todayStr()
+        // Only future blocks are up for replacement on a today-replan.
+        const relevant = blocks.filter(b => !isToday || new Date(b.start_time).getTime() >= nowMs)
+        const blockKey = (iso: string) => {
+          const d = new Date(iso)
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+        }
+        const matchedBlockIds = new Set<string>()
+        const diff = new Map<number, 'new' | 'moved' | 'kept'>()
+        plan.items.forEach((it, i) => {
+          const byTitle = relevant.filter(b => b.title.trim().toLowerCase() === it.title.trim().toLowerCase() && !matchedBlockIds.has(b.id))
+          if (byTitle.length === 0) {
+            diff.set(i, 'new')
+            return
+          }
+          const exact = byTitle.find(b => blockKey(b.start_time) === it.start_time && blockKey(b.end_time) === it.end_time)
+          const match = exact ?? byTitle[0]
+          matchedBlockIds.add(match.id)
+          diff.set(i, exact ? 'kept' : 'moved')
+        })
+        setPlanDiff(diff)
+        setDroppedTitles(relevant.filter(b => !matchedBlockIds.has(b.id)).map(b => b.title))
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [plan, date])
 
   // Core turn: append user msg → call model → append reply → update plan.
   // Returns the turn (or null on error). Does NOT speak — callers decide.
@@ -197,9 +245,11 @@ export default function PlanScreen() {
     if (!plan || applying) return
     setApplying(true)
     try {
-      const count = await applyChatPlan(date, plan, model, firstPromptRef.current || 'Plan chat')
+      const result = await applyChatPlan(date, plan, model, firstPromptRef.current || 'Plan chat')
+      setLastUndo(result.undo)
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       emitTimerChange()
+      const count = result.created
       const skipped = plan.items.length - count
       const note = skipped > 0 ? ` (${skipped} had no category — assign one in Settings, then re-apply.)` : ''
       Alert.alert('Plan applied', `${count} block${count === 1 ? '' : 's'} added to ${fmtDate(date)}.${note}`, [
@@ -213,6 +263,21 @@ export default function PlanScreen() {
     }
   }, [plan, applying, date, model, router])
 
+  const revertApply = useCallback(async () => {
+    if (!lastUndo || applying) return
+    setApplying(true)
+    try {
+      await undoApply(lastUndo)
+      setLastUndo(null)
+      emitTimerChange()
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    } catch (e) {
+      Alert.alert('Undo failed', e instanceof Error ? e.message : 'Could not revert')
+    } finally {
+      setApplying(false)
+    }
+  }, [lastUndo, applying])
+
   // Changing the day starts a fresh planning session — otherwise a plan proposed
   // for one date could be Applied to another.
   const shiftDate = useCallback((delta: number) => {
@@ -221,6 +286,7 @@ export default function PlanScreen() {
     setMessages([])
     setPlan(null)
     setInput('')
+    setLastUndo(null)
     firstPromptRef.current = ''
   }, [])
 
@@ -323,21 +389,35 @@ export default function PlanScreen() {
           </View>
         )}
 
-        {/* Proposed plan card */}
+        {/* Proposed plan card — with a Keep/Move/Drop/Add diff vs the calendar */}
         {plan && planItemCount > 0 && (
           <View style={[styles.planCard, { backgroundColor: colors.surface1, borderColor: colors.border2 }]}>
             <Text style={[styles.planTitle, { color: colors.text1 }]}>{plan.title || 'Proposed plan'}</Text>
-            {plan.items.map((it, i) => (
-              <View key={i} style={styles.planItem}>
-                <Text style={[styles.planTime, { color: colors.text3 }]}>
-                  {fmtHHMM(it.start_time)}–{fmtHHMM(it.end_time)}
-                </Text>
-                <Text style={[styles.planItemTitle, { color: colors.text1 }]} numberOfLines={1}>
-                  {it.title}
-                  {it.todo_id ? '  ☑' : ''}
-                </Text>
-              </View>
-            ))}
+            {plan.items.map((it, i) => {
+              const status = planDiff.get(i)
+              return (
+                <View key={i} style={styles.planItem}>
+                  <Text style={[styles.planTime, { color: colors.text3 }]}>
+                    {fmtHHMM(it.start_time)}–{fmtHHMM(it.end_time)}
+                  </Text>
+                  <Text style={[styles.planItemTitle, { color: colors.text1 }]} numberOfLines={1}>
+                    {it.title}
+                    {it.todo_id ? '  ☑' : ''}
+                    {it.flexibility === 'fixed' ? '  ⊙' : it.flexibility === 'protected' ? '  ◈' : ''}
+                  </Text>
+                  {status && status !== 'kept' && (
+                    <Text style={[styles.diffTag, { color: status === 'new' ? '#8FBF8A' : '#CCAA6B' }]}>
+                      {status === 'new' ? 'new' : 'moved'}
+                    </Text>
+                  )}
+                </View>
+              )
+            })}
+            {droppedTitles.length > 0 && (
+              <Text style={[styles.droppedLine, { color: colors.text4 }]} numberOfLines={2}>
+                Drops: {droppedTitles.join(', ')}
+              </Text>
+            )}
             <Pressable
               onPress={apply}
               disabled={applying}
@@ -350,6 +430,12 @@ export default function PlanScreen() {
               )}
             </Pressable>
           </View>
+        )}
+
+        {lastUndo && !applying && (
+          <Pressable onPress={revertApply} style={[styles.undoPill, { borderColor: colors.border2 }]}>
+            <Text style={[styles.undoText, { color: colors.text2 }]}>Undo last apply</Text>
+          </Pressable>
         )}
       </ScrollView>
 
@@ -486,6 +572,17 @@ const styles = StyleSheet.create({
   planItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 3 },
   planTime: { fontSize: 13, fontFamily: fonts.ui, fontVariant: ['tabular-nums'], width: 110 },
   planItemTitle: { fontSize: 15, fontFamily: fonts.ui, flex: 1 },
+  diffTag: { fontSize: 10.5, fontFamily: fonts.ui, letterSpacing: 0.8, textTransform: 'uppercase' },
+  droppedLine: { fontSize: 12, fontFamily: fonts.ui, marginTop: 8, fontStyle: 'italic' },
+  undoPill: {
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginTop: 10,
+  },
+  undoText: { fontSize: 12.5, fontFamily: fonts.ui },
   applyBtn: {
     marginTop: 10,
     height: 46,

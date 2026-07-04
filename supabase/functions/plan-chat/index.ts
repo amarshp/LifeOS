@@ -166,9 +166,14 @@ const RESPONSE_SCHEMA = {
                 type: ['string', 'null'],
                 description: 'If this item schedules one of the BACKLOG TASKS, set its todo id; else null. Never invent an id.',
               },
+              flexibility: {
+                type: 'string',
+                enum: ['fixed', 'flexible', 'protected'],
+                description: 'fixed = appointment/meeting (never move without asking) · protected = sleep/meals/routines (move only with callout) · flexible = everything else.',
+              },
               notes: { type: ['string', 'null'] },
             },
-            required: ['title', 'start_time', 'end_time', 'category_id', 'todo_id', 'notes'],
+            required: ['title', 'start_time', 'end_time', 'category_id', 'todo_id', 'flexibility', 'notes'],
           },
         },
       },
@@ -313,6 +318,7 @@ const TOOLS = [
           end_time: { type: 'string' },
           category_id: { type: 'string' },
           todo_id: { type: 'string', description: 'If the block schedules a backlog task, its todo id.' },
+          flexibility: { type: 'string', enum: ['fixed', 'flexible', 'protected'], description: 'fixed for appointments/meetings; protected for sleep/meals/routines; default flexible.' },
         },
         required: ['date', 'title', 'start_time', 'end_time'],
       },
@@ -371,6 +377,11 @@ const TOOLS = [
           deadline: { type: 'string', description: 'Local date YYYY-MM-DD, only if the user gave one.' },
           recurrence: { type: 'string', enum: ['none', 'daily', 'weekdays', 'mwf', 'weekly'], description: 'Default none.' },
           category_id: { type: 'string', description: 'A real category id, only if one clearly fits.' },
+          kind: {
+            type: 'string',
+            enum: ['commitment', 'flexible', 'reminder', 'someday'],
+            description: 'commitment = promise/deadline involving another person · reminder = date-bound one-minute action · someday = keep but not for now · default flexible.',
+          },
           notes: { type: 'string' },
         },
         required: ['title'],
@@ -718,6 +729,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       const startIso = localToIso(date, st, tz)
       let endIso = localToIso(date, et, tz)
       if (endIso <= startIso) endIso = new Date(new Date(endIso).getTime() + 86_400_000).toISOString()
+      const flex = ['fixed', 'flexible', 'protected'].includes(str('flexibility') ?? '') ? str('flexibility')! : 'flexible'
       const { data, error } = await supabase
         .from('calendar_blocks')
         .insert({
@@ -730,6 +742,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
           source: 'manual',
           tags: [],
           todo_id: todoId ?? null,
+          flexibility: flex,
         })
         .select('id')
         .single()
@@ -818,6 +831,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
             ? today
             : todoNextDueAfter(recurrence, null, today)
           : null
+      const kind = ['commitment', 'flexible', 'reminder', 'someday'].includes(str('kind') ?? '') ? str('kind')! : 'flexible'
       const { data, error } = await supabase
         .from('todos')
         .insert({
@@ -830,6 +844,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
           next_due,
           notes: str('notes') ?? null,
           status: 'open',
+          kind,
         })
         .select('id')
         .single()
@@ -910,6 +925,66 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
   }
 }
 
+// ─── Evidence snapshot (deterministic, computed from real data) ──────────────
+
+/**
+ * Read-only context the planner should reason from: last-7-day tracked hours
+ * per category, sleep pattern, and today's coverage. Deterministic numbers —
+ * the model interprets them, it never invents them.
+ */
+async function buildEvidenceSnapshot(
+  supabase: SupabaseClient,
+  tz: string,
+  catName: (id: string | null) => string | null,
+): Promise<string> {
+  const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString()
+  const { data: entries } = await supabase
+    .from('time_entries')
+    .select('category_id, title, start_time, end_time, is_running')
+    .is('deleted_at', null)
+    .gte('start_time', sinceIso)
+    .order('start_time')
+  if (!entries || entries.length === 0) return '(no tracked data in the last 7 days)'
+
+  const nowMs = Date.now()
+  const today = todayLocal(tz)
+  const yesterday = addDaysStr(today, -1)
+  const catMs = new Map<string, number>()
+  const sleepByNight = new Map<string, number>() // local wake date → ms
+  let todayMs = 0
+  let yesterdayMs = 0
+
+  for (const e of entries) {
+    const startMs = new Date(e.start_time as string).getTime()
+    const endMs = e.end_time ? new Date(e.end_time as string).getTime() : nowMs
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
+    const durMs = Math.min(endMs, nowMs) - startMs
+    const name = catName(e.category_id as string | null) ?? 'Other'
+    catMs.set(name, (catMs.get(name) ?? 0) + durMs)
+    const endLocalDate = isoToLocal(new Date(Math.min(endMs, nowMs)).toISOString(), tz).slice(0, 10)
+    if (endLocalDate === today) todayMs += durMs
+    if (endLocalDate === yesterday) yesterdayMs += durMs
+    const isSleep = name.toLowerCase().includes('sleep') || (e.title as string).toLowerCase().includes('sleep')
+    if (isSleep) sleepByNight.set(endLocalDate, (sleepByNight.get(endLocalDate) ?? 0) + durMs)
+  }
+
+  const h = (ms: number) => (ms / 3_600_000).toFixed(1)
+  const catLine = [...catMs.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, ms]) => `${name} ${h(ms)}h`)
+    .join(', ')
+  const nights = [...sleepByNight.values()]
+  const sleepLine = nights.length
+    ? `sleep logged ${nights.length} night(s), avg ${h(nights.reduce((a, b) => a + b, 0) / nights.length)}h/night`
+    : 'no sleep entries logged'
+
+  return [
+    `Tracked last 7 days: ${catLine}.`,
+    `Sleep: ${sleepLine}.`,
+    `Yesterday total tracked: ${h(yesterdayMs)}h. Today so far: ${h(todayMs)}h.`,
+  ].join('\n')
+}
+
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 
 interface BacklogTodo {
@@ -920,6 +995,7 @@ interface BacklogTodo {
   next_due: string | null
   recurrence: string
   category_id: string | null
+  kind: string
 }
 
 const PRIORITY_WORD = ['', 'low', 'medium', 'high']
@@ -928,9 +1004,10 @@ function buildSystemPrompt(
   date: string,
   timezone: string,
   categories: Array<{ id: string; name: string; kind: string }>,
-  existing: Array<{ title: string; start_time: string; end_time: string }>,
+  existing: Array<{ title: string; start_time: string; end_time: string; flexibility?: string }>,
   todos: BacklogTodo[],
   expectedSleepHours: number,
+  evidenceSnapshot: string,
 ): string {
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const catLines = categories.length
@@ -938,13 +1015,14 @@ function buildSystemPrompt(
     : '(none yet)'
   const existingLines = existing.length
     ? existing
-        .map((b) => `- ${b.title}: ${b.start_time} → ${b.end_time}`)
+        .map((b) => `- ${b.title}: ${b.start_time} → ${b.end_time}${b.flexibility && b.flexibility !== 'flexible' ? ` [${b.flexibility.toUpperCase()}]` : ''}`)
         .join('\n')
     : '(nothing planned yet)'
   const todoLines = todos.length
     ? todos
         .map((t) => {
           const parts: string[] = []
+          if (t.kind !== 'flexible') parts.push(t.kind.toUpperCase())
           if (t.priority > 0) parts.push(`${PRIORITY_WORD[t.priority]} priority`)
           if (t.recurrence !== 'none') parts.push(`repeats ${t.recurrence}${t.next_due ? `, due ${t.next_due}` : ''}`)
           else if (t.deadline) parts.push(`deadline ${t.deadline.slice(0, 10)}`)
@@ -975,6 +1053,14 @@ ${existingLines}
 BACKLOG TASKS the user wants to get done (pull the relevant ones into THIS day's plan, highest priority and nearest deadline first — only as many as realistically fit; leave the rest for another day):
 ${todoLines}
 
+EVIDENCE SNAPSHOT (deterministic, computed from the user's real tracked data — interpret it, never contradict it, and cite the window when you use it, e.g. "over the last 7 days"):
+${evidenceSnapshot}
+
+SEMANTICS:
+- Block flexibility: [FIXED] = appointment/meeting — never move or drop it in a plan without asking. [PROTECTED] = sleep/meals/important routines — move only within reason and explicitly call out the compromise. Unmarked = flexible, you may move it in a replan.
+- Task kinds: COMMITMENT = a promise involving another person or a hard deadline — a finalized plan must schedule it, explicitly defer it (say so), or get the user's ok to skip it; never silently omit it. REMINDER = a one-minute date-bound action — surface it, give it a tiny slot or a reminder, not a big block. SOMEDAY = keep out of today unless asked. Set kind on add_todo from the user's language.
+- Set flexibility on every plan item: meetings/appointments the user stated → fixed; sleep/meals → protected; else flexible.
+
 HOW TO BEHAVE:
 - Converse naturally. Ask at most 1–2 sharp clarifying questions when details are missing. Don't interrogate.
 - Make proactive suggestions (buffers between meetings, breaks, deep-work blocks, wind-down) but keep the user in control.
@@ -1001,6 +1087,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.
 - Building or reworking the WHOLE day's plan → use the "plan" field of your reply (the user taps Apply), NOT add_calendar_block calls.
 - REPLAN FROM NOW: when the target day is today and the user asks to redo/replan the rest of the day, first look at reality (list_time_entries + list_calendar_blocks), then propose a plan that starts AT OR AFTER the current time — never re-emit items for hours that already passed. Apply only replaces planned blocks from now onward; the morning that already happened stays.
+- REPLAN TRADEOFFS: when the day is meaningfully behind, ask at most TWO sharp tradeoff questions before proposing (e.g. protect the gym or recover sleep; shorten deep work or defer a task) — ground them in the EVIDENCE SNAPSHOT and state facts (with their window) separately from your judgment. Then propose. Do not interrogate further.
 - After acting, your reply must state plainly what you changed.
 - Never invent ids: only use entry/block/category ids returned by tools or listed above.
 
@@ -1061,13 +1148,13 @@ Deno.serve(async (req) => {
     supabase.from('categories').select('id, name, kind').is('deleted_at', null).order('sort_order'),
     supabase
       .from('calendar_blocks')
-      .select('title, start_time, end_time')
+      .select('title, start_time, end_time, flexibility')
       .eq('date', date)
       .is('deleted_at', null)
       .order('start_time'),
     supabase
       .from('todos')
-      .select('id, title, priority, deadline, next_due, recurrence, category_id')
+      .select('id, title, priority, deadline, next_due, recurrence, category_id, kind')
       .eq('status', 'open')
       .is('deleted_at', null)
       .order('priority', { ascending: false }),
@@ -1077,13 +1164,19 @@ Deno.serve(async (req) => {
   const cats = (categories ?? []) as Array<{ id: string; name: string; kind: string }>
   const allowedIds = new Set(cats.map((c) => c.id))
   const allowedTodoIds = new Set(((todos ?? []) as BacklogTodo[]).map((t) => t.id))
+  const evidenceSnapshot = await buildEvidenceSnapshot(
+    supabase,
+    timezone,
+    (id) => cats.find((c) => c.id === id)?.name ?? null,
+  ).catch(() => '(snapshot unavailable)')
   const system = buildSystemPrompt(
     date,
     timezone,
     cats,
-    (blocks ?? []) as Array<{ title: string; start_time: string; end_time: string }>,
+    (blocks ?? []) as Array<{ title: string; start_time: string; end_time: string; flexibility?: string }>,
     (todos ?? []) as BacklogTodo[],
     expectedSleepHours,
+    evidenceSnapshot,
   )
 
   const ctx: ToolCtx = {

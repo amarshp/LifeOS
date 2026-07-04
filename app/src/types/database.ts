@@ -158,6 +158,8 @@ export interface WeeklyTemplateBlockUpdate {
 
 export type RecurrenceType = 'none' | 'daily' | 'weekdays' | 'mwf' | 'weekly' | 'custom'
 export type BlockSource = 'template' | 'manual' | 'google_calendar'
+// How movable a planned block is for the AI planner.
+export type BlockFlexibility = 'fixed' | 'flexible' | 'protected'
 
 export interface CalendarBlock {
   id: string
@@ -175,6 +177,7 @@ export interface CalendarBlock {
   tags: string[]
   notes: string | null
   todo_id: string | null
+  flexibility: BlockFlexibility
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -196,6 +199,7 @@ export interface CalendarBlockInsert {
   tags?: string[]
   notes?: string | null
   todo_id?: string | null
+  flexibility?: BlockFlexibility
 }
 
 export interface CalendarBlockUpdate {
@@ -321,6 +325,7 @@ export interface DailyPlanItem {
   sort_order: number
   calendar_block_id: string | null
   todo_id: string | null
+  flexibility: BlockFlexibility
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -339,6 +344,7 @@ export interface DailyPlanItemInsert {
   sort_order?: number
   calendar_block_id?: string | null
   todo_id?: string | null
+  flexibility?: BlockFlexibility
 }
 
 export interface DailyPlanItemUpdate {
@@ -361,6 +367,9 @@ export interface DailyPlanItemUpdate {
 // "done today" = a todo_completions row + advanced next_due. See `todos.ts`.
 export type TodoStatus = 'open' | 'done'
 export type TodoPriority = 0 | 1 | 2 | 3 // none · low · med · high
+// What the task means to the planner: a promise, normal work, a tiny
+// date-bound action, or parked-for-later.
+export type TodoKind = 'commitment' | 'flexible' | 'reminder' | 'someday'
 
 export interface Todo {
   id: string
@@ -376,6 +385,7 @@ export interface Todo {
   recurrence_days: number[] | null
   next_due: string | null
   sort_order: number
+  kind: TodoKind
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -394,6 +404,7 @@ export interface TodoInsert {
   recurrence_days?: number[] | null
   next_due?: string | null
   sort_order?: number
+  kind?: TodoKind
 }
 
 export interface TodoUpdate {
@@ -408,6 +419,7 @@ export interface TodoUpdate {
   recurrence_days?: number[] | null
   next_due?: string | null
   sort_order?: number
+  kind?: TodoKind
   deleted_at?: string | null
 }
 
