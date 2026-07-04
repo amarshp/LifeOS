@@ -668,6 +668,11 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         const nowIso = new Date().toISOString()
         const rStart = r.start_time as string
         const end = start > rStart ? start : nowIso > rStart ? nowIso : rStart
+        // Sub-minute switched-away timers are mis-speaks — discard, don't keep dust.
+        if (new Date(end).getTime() - new Date(rStart).getTime() < 60_000) {
+          await supabase.from('time_entries').delete().eq('id', r.id)
+          continue
+        }
         const { error: stopErr } = await supabase
           .from('time_entries')
           .update({ is_running: false, end_time: end })
@@ -713,6 +718,53 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .is('deleted_at', null)
         .limit(1)
       if (dup && dup.length > 0) return { ok: true, entry_id: dup[0].id, note: 'already logged — no duplicate created' }
+
+      // ONE REALITY: with parallel timers off, a backfilled period is the truth
+      // for its window — trim whatever else covers it (completed or running)
+      // instead of leaving a hidden overlap on the timeline.
+      if (!ctx.allowParallel) {
+        const nowIso2 = new Date().toISOString()
+        const { data: overlaps } = await supabase
+          .from('time_entries')
+          .select('id, title, category_id, start_time, end_time, is_running, tags, todo_id')
+          .is('deleted_at', null)
+          .lt('start_time', endIso)
+          .or(`end_time.gt.${startIso},is_running.eq.true`)
+        for (const o of overlaps ?? []) {
+          const oStart = o.start_time as string
+          const oEnd = (o.end_time as string | null) ?? nowIso2
+          if (oEnd <= startIso) continue // touching, not overlapping
+          if (oStart < startIso && oEnd > endIso) {
+            // Spans the whole window → split around it.
+            await supabase.from('time_entries').update({ end_time: startIso, is_running: false }).eq('id', o.id)
+            await supabase.from('time_entries').insert({
+              user_id: ctx.userId, category_id: o.category_id, title: o.title,
+              start_time: endIso, end_time: o.is_running ? null : oEnd,
+              is_running: o.is_running === true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
+            })
+            ctx.actions.push(`Split "${o.title}" around the logged period`)
+          } else if (oStart < startIso) {
+            await supabase.from('time_entries').update({ end_time: startIso, is_running: false }).eq('id', o.id)
+            // An interrupted RUNNING activity resumes after the backfill.
+            if (o.is_running && endIso <= nowIso2) {
+              await supabase.from('time_entries').insert({
+                user_id: ctx.userId, category_id: o.category_id, title: o.title,
+                start_time: endIso, is_running: true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
+              })
+              ctx.actions.push(`Trimmed "${o.title}" to ${isoToLocal(startIso, tz)} and resumed it after`)
+            } else {
+              ctx.actions.push(`Trimmed "${o.title}" to end ${isoToLocal(startIso, tz)}`)
+            }
+          } else if (oEnd > endIso) {
+            await supabase.from('time_entries').update({ start_time: endIso }).eq('id', o.id)
+            ctx.actions.push(`Moved "${o.title}" to start ${isoToLocal(endIso, tz)}`)
+          } else {
+            await supabase.from('time_entries').update({ deleted_at: nowIso2 }).eq('id', o.id)
+            ctx.actions.push(`Removed "${o.title}" (covered by the logged period)`)
+          }
+        }
+      }
+
       const { data, error } = await supabase
         .from('time_entries')
         .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: [], todo_id: todoId ?? null })
@@ -1267,6 +1319,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
     6. add_completed_entry(title="Sleep", start_date="2026-07-03", start_time="01:00", end_date="2026-07-03", end_time="08:00", category=Sleep)
     7. start_timer(title="Office work", start_date="2026-07-03", start_time="08:00", category=Office)
 - If the LAST recounted activity runs "to now" / "since then" and the user hasn't said it ended, do NOT add_completed_entry for it — instead start_timer with its backdated start_time so it is still running. One continuous entry, not a completed piece plus a new timer.
+- MID-ACTIVITY CORRECTIONS ("the last 20 minutes I was actually on a call"): just add_completed_entry for the recounted period — do NOT stop the running timer first. With single-timer mode on, the overlap is trimmed automatically and an interrupted running activity resumes after the period. Then report exactly what got trimmed/resumed.
 - Quick schedule edits ("push my call to 3", "add dentist at 4") → use the calendar block tools on the right date.
 - TASKS: you manage the user's backlog too. When they mention something they need to do without a fixed time ("remind me to renew my license", "I should call the plumber sometime") → add_todo. When they say they finished a task → complete_todo (plus log the time if they said when). Linking work to tasks: pass todo_id on start_timer / add_completed_entry / add_calendar_block when the activity IS one of the backlog tasks — stopping a linked timer or logging a linked period completes the task automatically.
 - REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.

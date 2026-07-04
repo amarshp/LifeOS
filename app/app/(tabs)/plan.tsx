@@ -13,7 +13,6 @@ import {
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Svg, { Path, Rect } from 'react-native-svg'
 import {
   useAudioRecorder,
@@ -324,31 +323,29 @@ export default function PlanScreen() {
   }, [recorder, send])
 
   // Hold = record; slide left while holding = cancel (WhatsApp-style).
+  // Raw touch handlers, NOT a Pan gesture: Pan needed movement to activate, so
+  // a perfectly-still hold could miss the release and leave the mic stuck.
   const micCancelRef = useRef(false)
+  const micStartXRef = useRef(0)
   const [micCancelArmed, setMicCancelArmed] = useState(false)
-  const micGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .runOnJS(true)
-        .onBegin(() => {
-          micCancelRef.current = false
-          setMicCancelArmed(false)
-          void startHold()
-        })
-        .onUpdate((e) => {
-          const armed = e.translationX < -70
-          if (armed !== micCancelRef.current) {
-            micCancelRef.current = armed
-            setMicCancelArmed(armed)
-            if (armed) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-          }
-        })
-        .onFinalize(() => {
-          setMicCancelArmed(false)
-          void endHold(micCancelRef.current)
-        }),
-    [startHold, endHold],
-  )
+  const micTouchStart = useCallback((x: number) => {
+    micCancelRef.current = false
+    micStartXRef.current = x
+    setMicCancelArmed(false)
+    void startHold()
+  }, [startHold])
+  const micTouchMove = useCallback((x: number) => {
+    const armed = x - micStartXRef.current < -70
+    if (armed !== micCancelRef.current) {
+      micCancelRef.current = armed
+      setMicCancelArmed(armed)
+      if (armed) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    }
+  }, [])
+  const micTouchEnd = useCallback((cancelled?: boolean) => {
+    setMicCancelArmed(false)
+    void endHold(cancelled ?? micCancelRef.current)
+  }, [endHold])
 
   // Long-press any message → remove it and everything after (then re-ask).
   const deleteFromMessage = useCallback((index: number) => {
@@ -652,24 +649,26 @@ export default function PlanScreen() {
             <SendIcon color="#fff" />
           </Pressable>
         ) : (
-          <GestureDetector gesture={micGesture}>
-            <View
-              style={[
-                styles.circleBtn,
-                {
-                  backgroundColor: micCancelArmed ? colors.surface3 : recorderState.isRecording ? ACCENT : colors.surface3,
-                  opacity: transcribing || sending ? 0.6 : 1,
-                  transform: [{ scale: recorderState.isRecording && !micCancelArmed ? 1.15 : 1 }],
-                },
-              ]}
-            >
-              {transcribing ? (
-                <ActivityIndicator color={colors.text2} />
-              ) : (
-                <MicIcon color={recorderState.isRecording && !micCancelArmed ? '#fff' : colors.text1} />
-              )}
-            </View>
-          </GestureDetector>
+          <View
+            onTouchStart={(e) => micTouchStart(e.nativeEvent.pageX)}
+            onTouchMove={(e) => micTouchMove(e.nativeEvent.pageX)}
+            onTouchEnd={() => micTouchEnd()}
+            onTouchCancel={() => micTouchEnd(true)}
+            style={[
+              styles.circleBtn,
+              {
+                backgroundColor: micCancelArmed ? colors.surface3 : recorderState.isRecording ? ACCENT : colors.surface3,
+                opacity: transcribing || sending ? 0.6 : 1,
+                transform: [{ scale: recorderState.isRecording && !micCancelArmed ? 1.15 : 1 }],
+              },
+            ]}
+          >
+            {transcribing ? (
+              <ActivityIndicator color={colors.text2} />
+            ) : (
+              <MicIcon color={recorderState.isRecording && !micCancelArmed ? '#fff' : colors.text1} />
+            )}
+          </View>
         )}
       </View>
     </KeyboardAvoidingView>
