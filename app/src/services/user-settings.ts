@@ -67,3 +67,13 @@ export async function setAllowParallelTimers(value: boolean): Promise<void> {
 export async function updateNotificationPrefs(patch: Partial<NotificationPrefs>): Promise<void> {
   await upsertSettings(patch)
 }
+
+/** Keep the server-side timezone current — the brain schedules by local clock. */
+export async function syncTimezone(): Promise<void> {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (tz) await upsertSettings({ timezone: tz })
+  } catch {
+    // no signal — brain falls back to its default
+  }
+}

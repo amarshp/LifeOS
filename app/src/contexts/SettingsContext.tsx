@@ -105,6 +105,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       userSettingsService.getUserSettings()
         .then(s => setAllowParallelState(s.allow_parallel_timers))
         .catch(() => {})
+      void userSettingsService.syncTimezone()
     }
     load()
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {

@@ -327,6 +327,9 @@ export default function PlanScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text1 }]}>Agent</Text>
+        <Pressable onPress={() => router.push('/brain')} hitSlop={10} style={styles.iconBtn}>
+          <EyeIcon color={colors.text4} />
+        </Pressable>
         <Pressable onPress={() => router.push('/memories')} hitSlop={10} style={styles.iconBtn}>
           <MemoryIcon color={colors.text4} />
         </Pressable>
@@ -497,6 +500,16 @@ export default function PlanScreen() {
         )}
       </View>
     </KeyboardAvoidingView>
+  )
+}
+
+function EyeIcon({ color }: { color: string }) {
+  // What the brain is watching.
+  return (
+    <Svg width={19} height={19} viewBox="0 0 24 24" fill="none">
+      <Path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke={color} strokeWidth={1.6} strokeLinejoin="round" />
+      <Path d="M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" stroke={color} strokeWidth={1.6} />
+    </Svg>
   )
 }
 

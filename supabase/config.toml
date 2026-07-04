@@ -409,3 +409,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.voice-track]
 verify_jwt = false
+
+# Brain runs from pg_cron (no JWT) — it authenticates with x-cron-key; the
+# client path re-verifies the user JWT itself.
+[functions.brain]
+verify_jwt = false
