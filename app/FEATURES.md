@@ -1,5 +1,40 @@
 # LifeOS Features
 
+## UX Redesign v3 — ✅ SHIPPED 2026-07-04 (all phases in source; needs new IPA for device)
+
+### One reality (single timer by default)
+- `allowParallelTimers` server setting (Settings → Advanced → "Simultaneous timers", default OFF) enforced BELOW the UI: DB cap trigger (1, or 2 when on), voice path downgrades "parallel …"/"also …" to a clean switch, agent auto-switches, capture sheet hides the parallel checkbox
+- Atomic switch everywhere: starting anything stops the previous timer at that instant (gap-free timeline); agent `start_timer` does the same and completes linked tasks
+
+### Capture-first sheet
+- Mode chooser removed — context infers it: gap tap → Log past (range fixed), past date → Log past (noon default), today → Start now; quiet "…instead" links keep other modes reachable
+- Title-first ("What are you doing?"); category inferred from title keyword, else most-used-for-this-hour; task/category/tags/notes/start-time behind one More options disclosure
+
+### Navigation: Now / Day·Tasks / Agent
+- Now (evolved Home): bell → Notification Center, gear → Settings, tracking-gap card ("2h 1m untracked since 10:29 — Fill it in →") and plan-drift card (→ Agent replan), at most one at a time
+- Day·Tasks: one tab, big serif segmented header (separate routes preserved); insights glyph in the header; Day view has a Timeline ↔ List toggle (ghost button above the FAB) — Toggl-style fixed-height rows, sub-minute entries visible, dashed tappable gap rows, sticky preference
+- Week stays parked; Insights/Settings/Tasks remain as routes off the tab bar
+
+### Notifications v1 (local — fire with the app killed)
+- Derived reminders: plan blocks (1–3 lead-time offsets), task deadlines (own offsets), plan-tomorrow nudge (set time), reconciled into a rolling 48h window of local notifications on foreground/focus/prefs change
+- Direct reminders: agent tools `add_reminder`/`cancel_reminder` ("remind me to call mom at 5"), Notification Center (/notifications) shows the whole upcoming queue with cancel
+- Settings → 04 Notifications: toggles, cycling lead-time presets, nudge time, quiet hours
+- Deferred to next IPA: bundled custom sounds
+
+### Agent v4 (gpt-5.1)
+- Model gpt-4.1-mini → gpt-5.1 (reasoning_effort low); entry/block/reminder/memory id allowlists (read-before-write), full date clamps
+- Evidence snapshot in every turn: 7-day tracked hours by category, sleep avg, yesterday/today coverage — deterministic numbers the model interprets, never invents
+- Plan semantics: blocks fixed/flexible/protected (proposal card marks ⊙/◈; planner won't move fixed without asking); todos commitment/flexible/reminder/someday (commitments can't be silently dropped from a finalized plan)
+- Replan: ≤2 tradeoff questions grounded in the snapshot → proposal card shows a Keep/Move/Drop/Add diff (new/moved tags + "Drops:" line) → Apply (future-only) → "Undo last apply" pill restores replaced blocks
+- Memories: agent saves durable facts ONLY with explicit consent ("remember that…"); /memories screen (bookmark icon) to add/pin/forget; memories + yesterday's journal injected into every turn
+- Journal: "Evening review" chip → factual summary from the real timeline + ≤3 rotating questions → saved per-day (`journal_entries`), feeds next-day planning
+
+### Autonomous brain (deterministic v1)
+- Durable open CONCERNS (evidence, importance, cooldown, notified count, resolution) — not fire-and-forget pings; sensors: 45m+ tracking gap, 60m+ plan drift, due commitments with no disposition, no-plan morning, no-journal evening
+- Triggers: pg_cron every 30 min (Vault-stored cron key, `setup_brain_cron` RPC) + throttled app-open tick; pushes via Expo to registered device tokens under a 5/day attention budget, per-kind cooldowns, quiet hours
+- /brain "Watching" screen (eye icon in Agent): open concerns with evidence + last action, dismiss, recently closed, and the run log of every act-or-stay-silent decision
+- Push transport: `push_tokens` registration on device (token lands after the next push-capable IPA build)
+
 ## Time Tracking
 
 ### Timer
