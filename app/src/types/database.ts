@@ -231,6 +231,7 @@ export interface TimeEntry {
   notes: string | null
   todo_id: string | null
   command_id: string | null
+  activity_push_token?: string | null
   push_started_at: string | null
   created_at: string
   updated_at: string

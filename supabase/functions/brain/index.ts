@@ -13,11 +13,18 @@
 // Deploy: npx supabase functions deploy brain --no-verify-jwt
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { sendActivityUpdate } from '../_shared/apns.ts'
+
+// CORS: the Expo WEB build calls this from a browser (app-open tick).
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-key',
+} as const
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
 }
 
@@ -315,6 +322,50 @@ async function runForUser(db: SupabaseClient, userId: string, trigger: string): 
     lines.push(`${pushed ? 'pushed' : 'recorded'} ${d.key}`)
   }
 
+  // Keep Live Activity subtitles honest while the app is closed: refresh the
+  // "Next: …" line on every tick for running entries that registered a
+  // per-activity push token.
+  try {
+    const { data: liveEntries } = await db
+      .from('time_entries')
+      .select('id, title, start_time, activity_push_token')
+      .eq('user_id', userId)
+      .eq('is_running', true)
+      .is('deleted_at', null)
+      .not('activity_push_token', 'is', null)
+    if (liveEntries && liveEntries.length > 0) {
+      const today = todayLocal(prefs.timezone)
+      const { data: blocks } = await db
+        .from('calendar_blocks')
+        .select('title, start_time')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .is('deleted_at', null)
+        .gt('start_time', new Date().toISOString())
+        .order('start_time')
+        .limit(1)
+      const next = blocks?.[0]
+      const subtitle = next
+        ? `Next: ${next.title} · ${localClock(next.start_time as string, prefs.timezone)}`
+        : ''
+      for (const e of liveEntries) {
+        try {
+          await sendActivityUpdate({
+            token: e.activity_push_token as string,
+            title: e.title as string,
+            subtitle,
+            startMs: new Date(e.start_time as string).getTime(),
+          })
+          lines.push(`LA subtitle refreshed (${subtitle || 'no next'})`)
+        } catch (err) {
+          lines.push(`LA update failed: ${err instanceof Error ? err.message.slice(0, 60) : 'error'}`)
+        }
+      }
+    }
+  } catch {
+    // Live Activity refresh is cosmetic — never fail the run over it.
+  }
+
   if (lines.length === 0) lines.push('all quiet — nothing to do')
   await db.from('brain_runs').insert({ user_id: userId, trigger, summary: lines.join('; ') })
   return lines.join('; ')
@@ -323,6 +374,7 @@ async function runForUser(db: SupabaseClient, userId: string, trigger: string): 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
 
   const url = Deno.env.get('SUPABASE_URL')
