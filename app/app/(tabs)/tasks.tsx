@@ -76,6 +76,18 @@ export default function TasksScreen() {
         categories={categories}
         planDate={date}
         onPlanChanged={emitTimerChange}
+        onPlanRequest={(todo) =>
+          router.replace({
+            pathname: '/(tabs)/day',
+            params: {
+              date,
+              sheet: 'planTask',
+              todoId: todo.id,
+              todoTitle: todo.title,
+              focusTs: String(Date.now()),
+            },
+          })
+        }
       />
 
       {/* Date selector: below the list — which day "+ plan" schedules into */}

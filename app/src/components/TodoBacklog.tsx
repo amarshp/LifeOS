@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useImperativeHandle, useState } from 'react'
-import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { fonts } from '../theme/tokens'
 import type { ColorPalette } from '../theme/tokens'
@@ -13,6 +13,9 @@ interface TodoBacklogProps {
   categories: Category[]
   planDate: string // the day "Add to plan" targets (Plan tab's selected date)
   onPlanChanged: () => void // a block was created → let Plan/Day refresh
+  // "+ plan" hands off to the Day plan sheet (title + task link prefilled) so
+  // the USER picks the time — nothing is scheduled silently.
+  onPlanRequest: (todo: Todo) => void
 }
 
 /** Imperative handle so the Plan screen's own "Add a task…" input bar (styled
@@ -56,7 +59,7 @@ function groupTodos(todos: Todo[]): Group[] {
 }
 
 export const TodoBacklog = forwardRef<TodoBacklogHandle, TodoBacklogProps>(function TodoBacklog(
-  { colors: tc, categories, planDate, onPlanChanged },
+  { colors: tc, categories, planDate, onPlanChanged, onPlanRequest },
   ref,
 ) {
   const [todos, setTodos] = useState<Todo[]>([])
@@ -86,21 +89,9 @@ export const TodoBacklog = forwardRef<TodoBacklogHandle, TodoBacklogProps>(funct
     load()
   }, [load])
 
-  const [planReceipt, setPlanReceipt] = useState<string | null>(null)
-
-  const addToPlan = useCallback(async (todo: Todo) => {
-    try {
-      const { start, end } = await todosService.addTodoToPlan(todo, planDate)
-      setPlannedIds((prev) => new Set(prev).add(todo.id))
-      onPlanChanged()
-      // Receipt: say WHERE it landed (the block is adjustable in Day view).
-      const fmt = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-      setPlanReceipt(`“${todo.title}” planned ${fmt(start)}–${fmt(end)} — drag it in Day to adjust`)
-      setTimeout(() => setPlanReceipt(null), 4000)
-    } catch (e) {
-      Alert.alert('Plan', e instanceof Error ? e.message : 'Could not add to plan')
-    }
-  }, [planDate, onPlanChanged])
+  const addToPlan = useCallback((todo: Todo) => {
+    onPlanRequest(todo)
+  }, [onPlanRequest])
 
   const openEdit = (t: Todo) => { setEditing(t); setEditorOpen(true) }
 
@@ -166,12 +157,6 @@ export const TodoBacklog = forwardRef<TodoBacklogHandle, TodoBacklogProps>(funct
         ))}
       </ScrollView>
 
-      {planReceipt && (
-        <View style={[styles.receipt, { backgroundColor: tc.surface3, borderColor: tc.border2 }]}>
-          <Text style={[styles.receiptTxt, { color: tc.text2 }]} numberOfLines={2}>{planReceipt}</Text>
-        </View>
-      )}
-
       <TodoEditorSheet
         visible={editorOpen}
         todo={editing}
@@ -203,15 +188,4 @@ const styles = StyleSheet.create({
   planned: { fontSize: 12.5, fontFamily: fonts.ui, fontWeight: '600' },
   kindBadge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
   kindBadgeTxt: { fontSize: 9.5, letterSpacing: 0.8, textTransform: 'uppercase', fontFamily: fonts.ui, fontWeight: '600' },
-  receipt: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 10,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  receiptTxt: { fontSize: 12.5, fontFamily: fonts.ui, lineHeight: 17 },
 })

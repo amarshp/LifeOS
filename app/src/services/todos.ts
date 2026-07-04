@@ -187,30 +187,6 @@ export async function fallbackCategoryId(): Promise<string | null> {
   return data?.[0]?.id ?? null
 }
 
-// ─── Plan bridge ─────────────────────────────────────────────
-// Pull a todo into a day's plan: create a calendar_block (carrying todo_id) at a
-// default 1-hour slot the user then adjusts in the Day view. The todo stays in
-// the backlog until done — being planned is tracked via the block's todo_id.
-/** Returns the created block's time range so the UI can show a receipt. */
-export async function addTodoToPlan(todo: Todo, date: string): Promise<{ start: Date; end: Date }> {
-  const categoryId = todo.category_id ?? (await fallbackCategoryId())
-  if (!categoryId) throw new Error('Create a category first (Settings), then plan tasks.')
-  const startHour = date === todayStr() ? Math.min(Math.max(new Date().getHours() + 1, 6), 22) : 9
-  const { start, end } = resolveLocalRange(date, startHour, 0, startHour + 1, 0)
-  await calendarBlocksService.createBlock({
-    category_id: categoryId,
-    title: todo.title,
-    date,
-    start_time: start.toISOString(),
-    end_time: end.toISOString(),
-    tags: [],
-    notes: todo.notes,
-    todo_id: todo.id,
-    source: 'manual',
-  })
-  return { start, end }
-}
-
 /** Todo ids that already have a block on `date` (so the backlog shows Planned). */
 export async function getPlannedTodoIdsForDate(date: string): Promise<string[]> {
   const blocks = await calendarBlocksService.getBlocksForDate(date)

@@ -313,7 +313,7 @@ function isDateInRange(date: string, startDate: string, endDate: string): boolea
 }
 
 export default function DayScreen() {
-  const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string; gapStart?: string; gapEnd?: string }>()
+  const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string; gapStart?: string; gapEnd?: string; todoId?: string; todoTitle?: string }>()
   const router = useRouter()
   const timer = useTimer()
   const { colors: tc, snapDragTo, hideSleep, sleepStart, sleepEnd, reduceMotion } = useSettings()
@@ -337,6 +337,7 @@ export default function DayScreen() {
   const [entrySheetRange, setEntrySheetRange] = useState<PastEntryRange | null>(null)
   const [entrySheetDate, setEntrySheetDate] = useState(() => toLocalDateStr(new Date()))
   const [entrySheetInitialMode, setEntrySheetInitialMode] = useState<'timer' | 'past' | 'plan'>('timer')
+  const [entrySheetPrefill, setEntrySheetPrefill] = useState<{ title: string; todoId: string } | null>(null)
   const [editingBlock, setEditingBlock] = useState<CalendarBlock | null>(null)
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null)
   // Timeline (proportional) ↔ List (fixed-height Toggl-style rows). Sticky.
@@ -543,7 +544,16 @@ export default function DayScreen() {
       setEntrySheetInitialMode('past')
       setShowEntrySheet(true)
     }
-  }, [params.sheet, params.focusTs, params.gapStart, params.gapEnd])
+    // "+ plan" on a task: open the plan sheet with the task prefilled — the
+    // user picks the time, nothing gets scheduled silently.
+    if (params.sheet === 'planTask' && params.todoId) {
+      setEntrySheetRange(null)
+      setEntrySheetDate(params.date ?? dateStr)
+      setEntrySheetPrefill({ title: params.todoTitle ?? '', todoId: params.todoId })
+      setEntrySheetInitialMode('plan')
+      setShowEntrySheet(true)
+    }
+  }, [params.sheet, params.focusTs, params.gapStart, params.gapEnd, params.todoId, params.todoTitle])
 
   useEffect(() => {
     if (initialScrollRequestedRef.current || params.editEntry) return
@@ -796,6 +806,7 @@ export default function DayScreen() {
   const closeEntrySheet = useCallback(() => {
     setShowEntrySheet(false)
     setEntrySheetRange(null)
+    setEntrySheetPrefill(null)
   }, [])
 
   const handleRailLongPress = useCallback((x: number, y: number) => {
@@ -1345,6 +1356,7 @@ export default function DayScreen() {
         viewDate={entrySheetViewDate}
         initialMode={entrySheetInitialMode}
         initialLogPastRange={entrySheetRange}
+        initialPrefill={entrySheetPrefill}
         onClose={closeEntrySheet}
         onStart={async (categoryId, title, tags, parallel, startTime, notes, todoId) => {
           if (parallel) {
@@ -1536,6 +1548,7 @@ interface AddEntrySheetProps {
   viewDate: string
   initialMode: 'timer' | 'past' | 'plan'
   initialLogPastRange: PastEntryRange | null
+  initialPrefill: { title: string; todoId: string } | null
   onClose: () => void
   onStart: (categoryId: string, title: string, tags: string[], parallel: boolean, startTime?: string, notes?: string | null, todoId?: string | null) => void | Promise<void>
   onSaveCompleted: (categoryId: string, title: string, tags: string[], startTime: string, endTime: string, notes?: string | null, todoId?: string | null) => void | Promise<void>
@@ -1543,7 +1556,7 @@ interface AddEntrySheetProps {
   onCategoryCreated: (cat: Category) => void | Promise<void>
 }
 
-function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runningCount, lastStopTime, viewDate, initialMode, initialLogPastRange, onClose, onStart, onSaveCompleted, onSavePlan, onCategoryCreated }: AddEntrySheetProps) {
+function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runningCount, lastStopTime, viewDate, initialMode, initialLogPastRange, initialPrefill, onClose, onStart, onSaveCompleted, onSavePlan, onCategoryCreated }: AddEntrySheetProps) {
   const { reduceMotion, colors: tc, allowParallelTimers } = useSettings()
   const [mode, setMode] = useState<'timer' | 'past' | 'plan'>('timer')
   const [planRecurrence, setPlanRecurrence] = useState('none')
@@ -1623,6 +1636,12 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     setSelectedTodoId(null)
     setShowMore(false)
     setCatIsAuto(true)
+    if (initialPrefill) {
+      // "+ plan" handoff: the task is already chosen; only the time is open.
+      setTitle(initialPrefill.title)
+      setTitleIsAuto(false)
+      setSelectedTodoId(initialPrefill.todoId)
+    }
     timeEntriesService.getCategoryUsageNearHour(new Date().getHours(), new Date().getDay())
       .then(usage => setCategoryUsage(new Map(usage.map(u => [u.category_id, u.count]))))
       .catch(() => {})
@@ -1666,7 +1685,7 @@ function AddEntrySheet({ visible, categories, blocks, savedTags, tagUsage, runni
     setSubmitting(false)
     setError(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, initialLogPastRange, initialMode, blocks, viewDate])
+  }, [visible, initialLogPastRange, initialMode, initialPrefill, blocks, viewDate])
 
   // Separate effect: set a default category once options are available.
   // Kept apart so category-usage re-sorting never re-triggers mode init above.
