@@ -80,7 +80,8 @@ RULES:
 - Fix the title: correct obvious mis-hearings ("calform berito" → "California Burrito"), expand shorthand, Sentence case, keep it under ~6 words. If it is already clean, return it UNCHANGED.
 - GENERIC TITLE, SPECIFIC TAGS: the title names the ACTIVITY in its most reusable form ("Snack", "Lunch", "Gym", "Watching anime"); the distinguishing details move into tags. "pre gym eggs" → title "Snack", tags ["eggs","pre-gym"]. "leg day workout" → title "Gym", tags ["legs"]. Named places/people may stay in the title when the place IS the activity ("At California Burrito").
 - category_id: choose the best EXISTING category id from the list; null only if nothing fits at all. Travel/driving → a commute-like category; eating out → food; a show/anime → watching/leisure; a known project name (e.g. "LifeOS") → the work/study-like category it belongs to.
-- tags: 0-2 lowercase-kebab specifics worth aggregating later (place name, project name, show name). Reuse EXISTING TAGS when they mean the same thing. No generic tags like "misc".
+- tags: 0-2 lowercase-kebab specifics worth aggregating later (place name, project name, show name). No generic tags like "misc".
+- TAG CONSISTENCY (important): the EXISTING TAGS list is the user's established vocabulary. If any existing tag denotes the same thing as a tag you'd add, you MUST reuse the EXACT existing tag — never coin a near-synonym or platform variant. E.g. if "reels" exists, tag reels-watching "reels", not "instagram"/"shorts"/"scrolling"; if "gym" exists use it, not "workout". Only invent a new tag when NOTHING existing means the same thing. Do not attach a project tag to an unrelated activity (e.g. never tag an OCR/electric-bills entry "lifeos").
 - kind (todos only): commitment = promise/deadline involving someone; reminder = tiny date-bound action; someday = parked wish; else flexible.
 - confidence: high only when meaning + category are unambiguous.
 

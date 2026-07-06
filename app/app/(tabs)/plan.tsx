@@ -12,6 +12,7 @@ import {
   Alert,
 } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import Svg, { Path, Rect } from 'react-native-svg'
 import {
@@ -61,6 +62,7 @@ function fmtHHMM(hhmm: string): string {
 
 export default function PlanScreen() {
   const { colors, expectedSleepHours } = useSettings()
+  const tabBarHeight = useBottomTabBarHeight()
   const router = useRouter()
 
   const [date, setDate] = useState<string>(todayStr)
@@ -227,7 +229,10 @@ export default function PlanScreen() {
         }
       }
       if (!firstPromptRef.current) firstPromptRef.current = trimmed
-      const next: ChatMessage[] = [...messagesRef.current, { role: 'user', content: trimmed }]
+      // Drop any prior error notes so they don't get re-sent as context (they'd
+      // confuse the model) — resending also clears the stale ⚠️ from the view.
+      const base = messagesRef.current.filter((m) => !(m.role === 'assistant' && m.content.startsWith('⚠️')))
+      const next: ChatMessage[] = [...base, { role: 'user', content: trimmed }]
       setMessages(next)
       setSending(true)
       scrollToEnd()
@@ -452,6 +457,7 @@ export default function PlanScreen() {
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
     >
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>

@@ -175,26 +175,25 @@ async function ensurePermission(n: NotifModule): Promise<boolean> {
  * Make the OS schedule match computeUpcoming() for the rolling window.
  * Idempotent; call on foreground, after plan/task changes, after prefs edits.
  */
-const DELIVERED_TTL_MS = 30 * 60_000 // plan nudges older than this get swept
-
 export async function reconcileNotifications(): Promise<void> {
   const n = getModule()
   if (!n) return
 
   await remindersService.sweepFiredReminders().catch(() => {})
 
-  // Auto-clear stale PLAN-BLOCK nudges only ("Gym starts at 6:00") — once the
-  // block has long started they're noise. Everything else stays until the user
-  // acts: task deadlines, agent/user reminders, rituals, brain pushes, runaway
-  // alerts are commitments, not nudges.
+  // On app open/foreground, clear stale DELIVERED notifications from the tray —
+  // anything that has fired is outdated once the user is back in the app. Keep
+  // only un-acted COMMITMENTS (task deadlines + agent/user reminders): those stay
+  // until the user acts on them. Everything else delivered (plan-block nudges,
+  // rituals, runaway alerts, stale remote pushes) is dismissed. Only touches
+  // delivered items — scheduled/future reminders are rescheduled below, so no
+  // ping is lost. Cosmetic — never block the reschedule if it throws.
   try {
     const presented = await n.getPresentedNotificationsAsync()
     for (const p of presented) {
-      if (!p.request.identifier.startsWith(`${ID_PREFIX}plan:`)) continue
-      const deliveredMs = (p.date ?? 0) * (p.date && p.date < 1e12 ? 1000 : 1) // seconds vs ms defensive
-      if (deliveredMs > 0 && Date.now() - deliveredMs > DELIVERED_TTL_MS) {
-        await n.dismissNotificationAsync(p.request.identifier).catch(() => {})
-      }
+      const id = p.request.identifier
+      if (id.startsWith(`${ID_PREFIX}task:`) || id.startsWith(`${ID_PREFIX}rem:`)) continue
+      await n.dismissNotificationAsync(id).catch(() => {})
     }
   } catch {
     // cosmetic — never block the reschedule below

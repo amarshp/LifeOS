@@ -19,6 +19,7 @@
 - Derived reminders: plan blocks (1–3 lead-time offsets), task deadlines (own offsets), plan-tomorrow nudge (set time), reconciled into a rolling 48h window of local notifications on foreground/focus/prefs change
 - Direct reminders: agent tools `add_reminder`/`cancel_reminder` ("remind me to call mom at 5"), Notification Center (/notifications) shows the whole upcoming queue with cancel
 - Settings → 04 Notifications: toggles, cycling lead-time presets, nudge time, quiet hours
+- Auto-clear on open: reconcile dismisses stale delivered (already-fired = outdated) notifications from the tray on foreground/focus, but KEEPS un-acted commitments (task deadlines `lifeq:task:` + agent/user reminders `lifeq:rem:`); plan nudges/rituals/runaway/stale remote pushes are cleared. Scheduled/future reminders are untouched (rescheduled immediately after), so no ping is lost
 - Deferred to next IPA: bundled custom sounds
 
 ### Agent v4 (gpt-5.1)
@@ -28,6 +29,9 @@
 - Replan: ≤2 tradeoff questions grounded in the snapshot → proposal card shows a Keep/Move/Drop/Add diff (new/moved tags + "Drops:" line) → Apply (future-only) → "Undo last apply" pill restores replaced blocks
 - Memories: agent saves durable facts ONLY with explicit consent ("remember that…"); /memories screen (bookmark icon) to add/pin/forget; memories + yesterday's journal injected into every turn
 - Journal: "Evening review" chip → factual summary from the real timeline + ≤3 rotating questions → saved per-day (`journal_entries`), feeds next-day planning
+- Deterministic gap detection: `list_time_entries` returns a computed `gaps[]` (uncovered spans ≥10 min); after any backfill the agent MUST re-list, raise every remaining gap in the same reply, and only call the day complete when `gaps[]` is empty (no more eyeballing timestamps / missed sleep→next boundaries)
+- Agent-started timers now fire an APNs push-to-start → Live Activity appears even when the app is backgrounded/closed (mirrors the voice path; client skip-guard keyed on `push_started_at` so no duplicate local card)
+- Error/retry hardening: plan-chat client classifies failures — clean transport drops auto-retry once (safe, no server work ran); a non-2xx/timeout gets a plain-language message (incl. "changes may still be saving, refresh before resending" for gateway timeouts) instead of raw "non-2xx"; stale ⚠️ error bubbles no longer re-sent as model context
 
 ### Autonomous brain (deterministic v1)
 - Durable open CONCERNS (evidence, importance, cooldown, notified count, resolution) — not fire-and-forget pings; sensors: 45m+ tracking gap, 60m+ plan drift, due commitments with no disposition, no-plan morning, no-journal evening
@@ -86,6 +90,7 @@
 - Category name shown in uppercase below the title
 - Quick-start category chips: top N categories (configurable via quickStartCount setting) shown as colored-dot + name chips; sorted by weighted frequency (same hour ×3, ±1 hr ×2, ±2 hr ×1, same weekday +2, ±1 day +1, over 90 days); excludes already-running categories; tapping starts a timer immediately
 - Next planned block shown with title and relative start time; tapping starts a timer for that block
+- Centre control is a start/pause toggle: shows a stop square while a task runs (tap → stopAll), a `+` while idle (tap → new-timer sheet); `+` is centred (removed stray paddingLeft offset)
 
 ## Day View
 - `Day` tab: timeline showing all entries and calendar blocks for the selected date
@@ -145,6 +150,7 @@
 - Free-text tags on entries and blocks, scoped to a category
 - Autocomplete suggests previously used tags for the selected category
 - Tag editor (Settings) mirrors categories: expand a tag to edit its name inline (auto-saves on blur), with an inline Delete; only adding a new tag needs a button
+- Auto-enrichment enforces tag consistency: the capture-cleaner is fed the user's existing tag vocabulary and must reuse the exact existing tag over coining a near-synonym/platform variant (e.g. "reels" not "instagram"/"shorts"), and won't attach an unrelated project tag (e.g. no "lifeos" on an OCR entry)
 
 ## Sheets
 - Bottom sheets share a draggable handle: drag it down to dismiss. Add/edit sheets save on drag-down; Settings editors (which auto-save) just close. Settings sheets use a clear "Done" button instead of a small ×

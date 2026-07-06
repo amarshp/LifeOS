@@ -242,13 +242,24 @@ export default function Test3Screen() {
           </View>
         )}
 
-        {/* Single centred start control */}
-        <Pressable
-          style={[styles.startCircle, { borderColor: tc.text2 }]}
-          onPress={() => router.push({ pathname: '/(tabs)/day', params: { sheet: 'entry' } })}
-        >
-          <Text style={{ color: tc.text1, fontSize: 28, lineHeight: 30, fontWeight: '300' }}>+</Text>
-        </Pressable>
+        {/* Single centred control: stop the running task, or start a new one when idle */}
+        {currentEntry ? (
+          <Pressable
+            style={[styles.startCircle, { borderColor: tc.text2 }]}
+            onPress={() => timer.stopAll()}
+            accessibilityLabel="Stop current timer"
+          >
+            <View style={[styles.stopSquare, { backgroundColor: tc.text1 }]} />
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[styles.startCircle, { borderColor: tc.text2 }]}
+            onPress={() => router.push({ pathname: '/(tabs)/day', params: { sheet: 'entry' } })}
+            accessibilityLabel="Start a new timer"
+          >
+            <Text style={{ color: tc.text1, fontSize: 28, lineHeight: 30, fontWeight: '300' }}>+</Text>
+          </Pressable>
+        )}
 
         {/* Quote */}
         <View style={styles.quoteWrap}>
@@ -361,8 +372,9 @@ const styles = StyleSheet.create({
 
   startCircle: {
     width: 64, height: 64, borderRadius: 32, borderWidth: 1,
-    alignItems: 'center', justifyContent: 'center', paddingLeft: 4, marginTop: 44,
+    alignItems: 'center', justifyContent: 'center', marginTop: 44,
   },
+  stopSquare: { width: 18, height: 18, borderRadius: 3 },
   quoteWrap: { marginTop: 56, alignItems: 'center', paddingHorizontal: 8 },
   quoteText: { fontSize: 16, lineHeight: 25, fontFamily: fonts.displayItalic, textAlign: 'center', letterSpacing: -0.1 },
   quoteAuthor: { fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', fontFamily: fonts.ui, marginTop: 14 },

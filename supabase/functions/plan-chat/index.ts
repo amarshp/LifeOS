@@ -11,6 +11,7 @@
 // Secret:  npx supabase secrets set OPENAI_API_KEY=sk-...
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { sendPushToStart } from '../_shared/apns.ts'
 
 const MODEL = 'gpt-5.1'
 // Reasoning effort for gpt-5.x: 'low' keeps latency inside OPENAI_TIMEOUT_MS
@@ -194,7 +195,7 @@ const TOOLS = [
     function: {
       name: 'list_time_entries',
       description:
-        `List the user's real tracked time entries for a local date, including any RUNNING timers (end_time null). Use before fixing/backfilling. ${TIME_ARG_NOTE}`,
+        `List the user's real tracked time entries for a local date, including any RUNNING timers (end_time null). Returns { entries, gaps } where gaps is the deterministically-computed list of uncovered spans (≥10 min) between entries — trust it, do not re-derive gaps by eyeballing entry times. Use before fixing/backfilling. ${TIME_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: { date: { type: 'string', description: 'Local date YYYY-MM-DD. Defaults to today.' } },
@@ -527,6 +528,10 @@ interface ToolCtx {
   allowedMemoryIds: Set<string>
   allowParallel: boolean // user_settings.allow_parallel_timers (default false)
   actions: string[]
+  // Set by start_timer when it creates a live entry, so the handler can fire an
+  // APNs push-to-start AFTER the tool loop (a backgrounded/closed app can't start
+  // a Live Activity locally — the push is the only way the card appears).
+  startedEntry?: { id: string; title: string; startMs: number }
 }
 
 /**
@@ -598,7 +603,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .order('start_time')
       if (error) return { error: error.message }
       for (const e of data ?? []) ctx.allowedEntryIds.add(e.id as string)
-      return (data ?? []).map((e) => ({
+      const rows = (data ?? []).map((e) => ({
         id: e.id,
         title: e.title,
         category_id: e.category_id,
@@ -606,6 +611,31 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         end_local: e.end_time ? isoToLocal(e.end_time, tz) : null,
         is_running: e.is_running,
       }))
+      // Deterministic gap detection: interior uncovered spans between entries.
+      // The model must not eyeball adjacency across many rows — it misses gaps
+      // (esp. sleep→next boundaries). We hand it the holes directly.
+      const GAP_MIN_MS = 10 * 60_000
+      const nowMs = Date.now()
+      const spans = (data ?? [])
+        .map((e) => ({
+          start: new Date(e.start_time as string).getTime(),
+          end: e.end_time ? new Date(e.end_time as string).getTime() : nowMs,
+        }))
+        .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
+        .sort((a, b) => a.start - b.start)
+      const gaps: { start_local: string; end_local: string; minutes: number }[] = []
+      let cursor = spans.length ? spans[0].end : 0
+      for (let i = 1; i < spans.length; i++) {
+        if (spans[i].start - cursor >= GAP_MIN_MS) {
+          gaps.push({
+            start_local: isoToLocal(new Date(cursor).toISOString(), tz),
+            end_local: isoToLocal(new Date(spans[i].start).toISOString(), tz),
+            minutes: Math.round((spans[i].start - cursor) / 60_000),
+          })
+        }
+        if (spans[i].end > cursor) cursor = spans[i].end
+      }
+      return { entries: rows, gaps }
     }
 
     case 'stop_timer': {
@@ -690,6 +720,9 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       if (error) return { error: error.message }
       ctx.allowedEntryIds.add(data.id as string)
       ctx.actions.push(`Started "${title}" at ${isoToLocal(start, tz)}`)
+      // Remember the live entry so the handler can push-to-start its Live Activity
+      // after the loop. Overwrite on repeated starts — only the last one is running.
+      ctx.startedEntry = { id: data.id as string, title, startMs: Date.parse(start) }
       return { ok: true, entry_id: data.id }
     }
 
@@ -1307,6 +1340,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - You can list/stop/start/insert/edit/delete the user's REAL tracked time entries and planned schedule blocks. Use tools whenever the user asks you to change something real — don't just talk about it.
 - SWITCH: when the user says they are NOW doing something different ("taking a coffee break", "starting lunch", "back to office work"), just call start_timer for the new activity — the previous timer is stopped automatically at that instant. Do NOT ask how long it will take, and do NOT call stop_timer first for a simple switch. (For BACKFILL, still stop stale timers at their TRUE historical end before adding entries — the auto-stop uses the new start time, which is wrong for a timer that really ended hours ago.)
 - BACKFILL: when the user recounts what actually happened (e.g. "forgot to track: woke at 8, got ready till 8:30, drove till 9, working since"), first call list_time_entries to see the day (there may be a stale RUNNING timer like Sleep or a very-old running entry from a prior day — check its start_local). Then: stop the stale timer at its true end, add_completed_entry for each missed period, and start_timer for what they're doing NOW. Chain times so periods touch without gaps or overlaps.
+- ALWAYS CLOSE GAPS AFTER BACKFILL: the moment you finish writing a backfill, call list_time_entries again and read its "gaps" array. If it is non-empty, you MUST proactively raise it in the SAME reply — do not wait for the user to notice. Name each gap with its clock window ("there's still 08:42–09:00 open") and ask what they were doing then, in one concise question covering all gaps. Only report the day as complete once a fresh list_time_entries returns gaps: []. Never end a backfill turn silently leaving gaps unaddressed.
 - Each backfilled entry's TITLE must describe that specific activity in the user's words ("Getting ready", "Drive to office") — never reuse the previous activity's title. Pick the closest category for each (commute → Commute, chores/errands/getting ready → Admin or Break); only the sleep period itself goes under Sleep.
 - Tool time args: pass times as "HH:MM" exactly as the user said them. ALWAYS pass explicit start_date/end_date — do not rely on the "defaults to today" omission for any backfilled period once the narrative involves more than a few recent hours; get it wrong and every activity silently lands on the wrong calendar day. Never invent dates — only use TODAY'S DATE, YESTERDAY'S DATE, or a date returned by list_time_entries/list_calendar_blocks.
 - BACKFILL ACROSS MIDNIGHT: a single recounted stretch often spans TWO calendar days (e.g. "left office 6:30 yesterday ... worked till 1am ... slept ... woke today at 8"). Find the sleep period first — it is the hinge. Every activity BEFORE that sleep period happened on YESTERDAY'S DATE; every activity from waking onward happened on TODAY'S DATE. An activity that itself crosses midnight (e.g. "worked on a project till 1am") gets start_date=YESTERDAY'S DATE and end_date=TODAY'S DATE on the SAME call — never split one continuous activity into two entries just because the clock rolled over. Do not default anything before the sleep hinge to today's date.
@@ -1329,6 +1363,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - CONFIRM OVERRIDES: if ALREADY PLANNED has meaningful content and the user asks for a NEW plan (not a tweak), confirm once before emitting the plan field: name what exists ("you already have gym at 6 and dinner at 8 planned") and ask whether to replace or work around it. Skip the confirmation only when the user already said to redo/replace/replan.
 - PLAN FROM CURRENT STATE: read CURRENT STATE before planning. A running entry tells you where the user is and what they're doing — if they're out (commuting, at a restaurant, at the gym), the plan's first items must get them from THERE to the next thing (finish up, travel home), never assume they're at home/office. Same for replanning: start from the running activity, not from an imagined idle state.
 - NO GAPS: a day plan is a continuous timeline — consecutive items should touch (buffers/travel are themselves items). If the user's own outline leaves a gap of 30+ minutes, do not silently keep it: either ask ONE question about how to fill it or propose something explicit (rest, buffer, free time) so every stretch is accounted for up to sleep.
+- GAP CHECK IS DATA, NOT EYEBALL: when reviewing/backfilling a day, the "gaps" array from list_time_entries is the source of truth for uncovered spans — enumerate EVERY entry in it (a sleep→next-activity boundary counts like any other). Never claim a day is "continuous"/"gap-free" unless that array is empty. Fill each gap (ask if unsure what it was), then re-list to confirm gaps is now empty before saying so.
 - REPLAN FROM NOW: when the target day is today and the user asks to redo/replan the rest of the day, first look at reality (list_time_entries + list_calendar_blocks), then propose a plan that starts AT OR AFTER the current time — never re-emit items for hours that already passed. Apply only replaces planned blocks from now onward; the morning that already happened stays.
 - REPLAN TRADEOFFS: when the day is meaningfully behind, ask at most TWO sharp tradeoff questions before proposing (e.g. protect the gym or recover sleep; shorten deep work or defer a task) — ground them in the EVIDENCE SNAPSHOT and state facts (with their window) separately from your judgment. Then propose. Do not interrogate further.
 - After acting, your reply must state plainly what you changed.
@@ -1554,6 +1589,51 @@ Deno.serve(async (req) => {
         todo_id: typeof tid === 'string' && allowedTodoIds.has(tid) ? tid : null,
       }
     })
+  }
+
+  // If the agent started a timer this turn, fire an APNs push-to-start so the
+  // Live Activity appears even when the app is backgrounded/closed (iOS forbids
+  // starting one locally from the background). Best-effort — the DB write already
+  // succeeded, so never fail the reply if the push fails. Needs the service role
+  // to read the device's push_to_start_token (RLS hides other tables' rows).
+  if (ctx.startedEntry) {
+    try {
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      if (serviceKey) {
+        const admin = createClient(url, serviceKey, { auth: { persistSession: false } })
+        // Only push if the entry is still running (a later switch may have stopped
+        // it) and no card exists yet (push_started_at null → not already pushed).
+        const { data: entry } = await admin
+          .from('time_entries')
+          .select('is_running, push_started_at')
+          .eq('id', ctx.startedEntry.id)
+          .maybeSingle()
+        const { data: creds } = await admin
+          .from('voice_credentials')
+          .select('push_to_start_token')
+          .eq('user_id', ctx.userId)
+          .not('push_to_start_token', 'is', null)
+        const token = creds?.find((c) => c.push_to_start_token)?.push_to_start_token as string | undefined
+        if (entry?.is_running && !entry.push_started_at && token) {
+          // Stamp BEFORE sending (same ordering as voice-track): a null stamp means
+          // "start a local fallback card", so stamping first guarantees no duplicate
+          // even if the push then fails.
+          await admin
+            .from('time_entries')
+            .update({ push_started_at: new Date().toISOString() })
+            .eq('id', ctx.startedEntry.id)
+          const startMs = ctx.startedEntry.startMs
+          await sendPushToStart({
+            token,
+            title: ctx.startedEntry.title,
+            entryId: ctx.startedEntry.id,
+            startMs: Number.isFinite(startMs) ? startMs : Date.now(),
+          })
+        }
+      }
+    } catch {
+      // Swallow — the timer is already saved; a missing Live Activity is cosmetic.
+    }
   }
 
   return json({ reply: parsed.reply, plan: parsed.plan, actions: ctx.actions, model: MODEL })

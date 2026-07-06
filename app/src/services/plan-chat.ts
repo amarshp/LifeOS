@@ -64,23 +64,84 @@ function deviceTimezone(): string {
   }
 }
 
+// Transport failures that never reached (or never got a response from) the Edge
+// Function — a plain resend is safe because no server work ran.
+const TRANSPORT_ERR_RE = /failed to (send a request|fetch)|network request failed|load failed|timed out/i
+
+interface InvokeFailure {
+  message: string
+  /** True only for transport errors — safe to auto-retry (no server mutation). */
+  transient: boolean
+}
+
+/**
+ * Turn a functions.invoke failure into a user-facing message + a safe-to-retry
+ * flag. A non-2xx means the server WAS reached and may have already mutated data
+ * (the agent starts timers / backfills), so those are NEVER auto-retried — only
+ * clean transport failures are.
+ */
+async function classifyFailure(error: unknown, data: { error?: string } | null): Promise<InvokeFailure> {
+  if (data?.error) return { message: String(data.error), transient: false }
+
+  // FunctionsHttpError carries the server Response on `.context`.
+  const ctx = (error as { context?: Response })?.context
+  const status = ctx?.status
+  if (typeof status === 'number') {
+    let serverMsg = ''
+    try {
+      const body = await (ctx as Response).clone().json()
+      serverMsg = typeof body?.error === 'string' ? body.error : ''
+    } catch {
+      /* body not JSON — fall back to status */
+    }
+    const timedOut = status === 504 || status === 408 || /took too long/i.test(serverMsg)
+    if (timedOut) {
+      return {
+        message: 'The planner is taking longer than usual — your changes may still be saving. Give it a moment, then pull to refresh before resending so you don’t double-apply.',
+        transient: false,
+      }
+    }
+    return {
+      message: serverMsg || `The planner hit a server error (${status}). Please try again.`,
+      transient: false,
+    }
+  }
+
+  const raw = error instanceof Error ? error.message : String(error ?? 'Request failed')
+  if (TRANSPORT_ERR_RE.test(raw)) return { message: 'Connection dropped — retrying…', transient: true }
+  return { message: raw || 'plan-chat failed', transient: false }
+}
+
 /** Send the conversation so far + target date; get the assistant's next turn. */
 export async function sendMessage(
   date: string,
   messages: ChatMessage[],
   expectedSleepHours?: number,
 ): Promise<ChatTurn> {
-  const { data, error } = await supabase.functions.invoke('plan-chat', {
-    body: { date, messages, timezone: deviceTimezone(), expected_sleep_hours: expectedSleepHours },
-  })
-  if (error) throw new Error(error.message || 'plan-chat failed')
-  if (data?.error) throw new Error(data.error)
-  return {
-    reply: data.reply ?? '',
-    plan: data.plan ?? null,
-    actions: Array.isArray(data.actions) ? data.actions : [],
-    model: data.model ?? 'unknown',
+  let lastMessage = 'plan-chat failed'
+  // At most 2 attempts, and the 2nd only fires for a clean transport failure
+  // (never reached the server) — a server error may have already changed data.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { data, error } = await supabase.functions.invoke('plan-chat', {
+      body: { date, messages, timezone: deviceTimezone(), expected_sleep_hours: expectedSleepHours },
+    })
+    if (!error && !data?.error) {
+      return {
+        reply: data.reply ?? '',
+        plan: data.plan ?? null,
+        actions: Array.isArray(data.actions) ? data.actions : [],
+        model: data.model ?? 'unknown',
+      }
+    }
+    const failure = await classifyFailure(error, data)
+    lastMessage = failure.message
+    if (failure.transient && attempt < 2) {
+      await new Promise((r) => setTimeout(r, 600))
+      continue
+    }
+    break
   }
+  throw new Error(lastMessage)
 }
 
 const AUDIO_MIME: Record<string, string> = {
