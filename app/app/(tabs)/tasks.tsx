@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native'
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert, KeyboardAvoidingView, Platform } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs'
 import { DayTasksSwitch } from '../../src/components/DayTasksSwitch'
 import { useSettings } from '../../src/contexts/SettingsContext'
 import { fonts } from '../../src/theme/tokens'
@@ -23,6 +24,7 @@ function fmtDate(dateStr: string): string {
 export default function TasksScreen() {
   const { colors } = useSettings()
   const router = useRouter()
+  const tabBarHeight = useBottomTabBarHeight()
   const params = useLocalSearchParams<{ date?: string }>()
   const [date, setDate] = useState<string>(todayStr)
 
@@ -61,7 +63,11 @@ export default function TasksScreen() {
   }, [])
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
+    >
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <DayTasksSwitch
           active="tasks"
@@ -121,7 +127,7 @@ export default function TasksScreen() {
           {addingTask ? <ActivityIndicator color="#fff" /> : <Text style={styles.plusTxt}>+</Text>}
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   )
 }
 
