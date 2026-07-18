@@ -31,7 +31,7 @@ import { addLocalDays } from '../../src/lib/time-range'
 import { emitTimerChange } from '../../src/lib/timer-events'
 import { SPEECH_RECORDING } from '../../src/lib/speechRecording'
 import {
-  sendMessage,
+  sendMessageStream,
   transcribe,
   applyChatPlan,
   undoApply,
@@ -60,15 +60,28 @@ function fmtHHMM(hhmm: string): string {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
+/** A chat message plus an optional verified log of the REAL data changes the
+ *  agent made on that turn — rendered as ground truth so the model's prose can't
+ *  claim a change that didn't happen. The `actions` field is UI-only; the edge
+ *  function strips it before sending history back to the model. */
+type UiMessage = ChatMessage & { actions?: string[] }
+
 export default function PlanScreen() {
   const { colors, expectedSleepHours } = useSettings()
   const tabBarHeight = useBottomTabBarHeight()
   const router = useRouter()
 
   const [date, setDate] = useState<string>(todayStr)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<UiMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  // Live streaming state: the agent's current step label + seconds elapsed, so
+  // the user sees real progress and time — not just a spinner.
+  const [step, setStep] = useState('')
+  const [elapsed, setElapsed] = useState(0)
+  const abortRef = useRef<AbortController | null>(null)
+  // Messages typed while a turn is in flight — flushed in order when it finishes.
+  const queueRef = useRef<string[]>([])
   const [transcribing, setTranscribing] = useState(false)
   const [applying, setApplying] = useState(false)
   const [plan, setPlan] = useState<ProposedPlan | null>(null)
@@ -103,10 +116,19 @@ export default function PlanScreen() {
   const scrollRef = useRef<ScrollView>(null)
   const firstPromptRef = useRef<string>('')
   // Mirror messages in a ref so the voice loop always sends the latest history.
-  const messagesRef = useRef<ChatMessage[]>([])
+  const messagesRef = useRef<UiMessage[]>([])
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+
+  // Tick the elapsed-time counter while a turn streams.
+  useEffect(() => {
+    if (!sending) return
+    const started = Date.now()
+    setElapsed(0)
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [sending])
 
   useEffect(() => {
     // Playback-first: record mode is entered only while the mic is held
@@ -129,7 +151,7 @@ export default function PlanScreen() {
   }, [messages.length, date])
 
   // Persist the conversation after every completed turn (fire-and-forget).
-  const persistSession = useCallback((msgs: ChatMessage[], turnPlan: ProposedPlan | null, forDate: string) => {
+  const persistSession = useCallback((msgs: UiMessage[], turnPlan: ProposedPlan | null, forDate: string) => {
     const run = async () => {
       if (sessionIdRef.current) {
         await chatSessionsService.updateSession(sessionIdRef.current, { messages: msgs, plan: turnPlan, date: forDate })
@@ -232,13 +254,19 @@ export default function PlanScreen() {
       // Drop any prior error notes so they don't get re-sent as context (they'd
       // confuse the model) — resending also clears the stale ⚠️ from the view.
       const base = messagesRef.current.filter((m) => !(m.role === 'assistant' && m.content.startsWith('⚠️')))
-      const next: ChatMessage[] = [...base, { role: 'user', content: trimmed }]
+      const next: UiMessage[] = [...base, { role: 'user', content: trimmed }]
       setMessages(next)
+      setStep('Thinking…')
       setSending(true)
       scrollToEnd()
+      const controller = new AbortController()
+      abortRef.current = controller
       try {
-        const turn = await sendMessage(effectiveDate, next, expectedSleepHours)
-        const withReply: ChatMessage[] = [...next, { role: 'assistant', content: turn.reply }]
+        const turn = await sendMessageStream(effectiveDate, next, expectedSleepHours, {
+          signal: controller.signal,
+          onStep: (label) => setStep(label),
+        })
+        const withReply: UiMessage[] = [...next, { role: 'assistant', content: turn.reply, actions: turn.actions }]
         setMessages(withReply)
         setPlan(turn.plan)
         setModel(turn.model)
@@ -248,25 +276,54 @@ export default function PlanScreen() {
         scrollToEnd()
         return turn
       } catch (e) {
+        // User hit stop: we stopped WAITING, but the agent may have already
+        // committed changes server-side — refresh so the UI shows what landed.
+        // Detect via the signal (expo/fetch throws a generic FetchError on abort,
+        // not a named AbortError), so name-matching alone would miss it.
+        if (controller.signal.aborted) {
+          emitTimerChange()
+          return null
+        }
         const msg = e instanceof Error ? e.message : 'Something went wrong'
         setMessages((m) => [...m, { role: 'assistant', content: `⚠️ ${msg}` }])
         return null
       } finally {
+        abortRef.current = null
         setSending(false)
+        setStep('')
         scrollToEnd()
       }
     },
     [date, scrollToEnd, expectedSleepHours, persistSession],
   )
 
+  // Stop WAITING for the current turn. Server work already in flight can still
+  // commit — runTurn's abort handler refreshes state so the UI reflects reality.
+  const stop = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
+
   // Typed/push-to-talk path: run the turn and read the reply aloud if TTS is on.
+  // While a turn is already streaming, queue the message instead of dropping it —
+  // it's sent automatically once the current turn (and any earlier queued ones)
+  // finish, so the user can keep typing without waiting.
   const send = useCallback(
     async (text: string, forDate?: string) => {
-      if (!text.trim() || sending) return
+      if (!text.trim()) return
       tts.stop()
       setInput('')
+      if (sending) {
+        queueRef.current.push(text.trim())
+        return
+      }
       const turn = await runTurn(text, forDate)
       if (turn && ttsOn && turn.reply) void tts.speak(turn.reply)
+      // Drain any messages typed while that turn was streaming, in order.
+      while (queueRef.current.length > 0) {
+        const next = queueRef.current.shift()!
+        const qTurn = await runTurn(next)
+        if (qTurn && ttsOn && qTurn.reply) void tts.speak(qTurn.reply)
+      }
     },
     [sending, ttsOn, runTurn],
   )
@@ -564,12 +621,28 @@ export default function PlanScreen() {
             ]}
           >
             <Text style={[styles.bubbleText, { color: colors.text1 }]}>{m.content}</Text>
+            {m.role === 'assistant' && m.actions && m.actions.length > 0 && (
+              <View style={[styles.actionLog, { borderTopColor: colors.border }]}>
+                {m.actions.map((a, j) => (
+                  <Text key={j} style={[styles.actionLine, { color: colors.text3 }]}>✓ {a}</Text>
+                ))}
+              </View>
+            )}
           </Pressable>
         ))}
 
         {sending && (
           <View style={[styles.bubble, styles.aiBubble, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
-            <ActivityIndicator color={colors.text3} />
+            <View style={styles.thinkingRow}>
+              <ActivityIndicator color={colors.text3} />
+              <Text style={[styles.thinkingLabel, { color: colors.text2 }]} numberOfLines={1}>
+                {step || 'Thinking…'}
+              </Text>
+              <Text style={[styles.thinkingTime, { color: colors.text4 }]}>{elapsed}s</Text>
+              <Pressable onPress={stop} hitSlop={8} style={[styles.stopBtn, { borderColor: colors.border2 }]}>
+                <View style={[styles.stopSquare, { backgroundColor: colors.text2 }]} />
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -643,14 +716,14 @@ export default function PlanScreen() {
           value={input}
           onChangeText={(t) => { tts.stop(); setInput(t) }}
           multiline
-          editable={!busy}
+          editable={!transcribing}
           onSubmitEditing={() => send(input)}
         />
         {input.trim().length > 0 ? (
           <Pressable
             onPress={() => send(input)}
-            disabled={busy}
-            style={[styles.circleBtn, { backgroundColor: ACCENT, opacity: busy ? 0.6 : 1 }]}
+            disabled={transcribing}
+            style={[styles.circleBtn, { backgroundColor: ACCENT, opacity: transcribing ? 0.6 : 1 }]}
           >
             <SendIcon color="#fff" />
           </Pressable>
@@ -786,6 +859,13 @@ const styles = StyleSheet.create({
   userBubble: { alignSelf: 'flex-end', borderBottomRightRadius: 4 },
   aiBubble: { alignSelf: 'flex-start', borderBottomLeftRadius: 4, borderWidth: 1 },
   bubbleText: { fontSize: 15, fontFamily: fonts.ui, lineHeight: 22 },
+  actionLog: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, gap: 2 },
+  actionLine: { fontSize: 12, fontFamily: fonts.ui, lineHeight: 17 },
+  thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  thinkingLabel: { flex: 1, fontSize: 14, fontFamily: fonts.ui },
+  thinkingTime: { fontSize: 12, fontFamily: fonts.ui, fontVariant: ['tabular-nums'] },
+  stopBtn: { width: 26, height: 26, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  stopSquare: { width: 9, height: 9, borderRadius: 2 },
   planCard: {
     alignSelf: 'stretch',
     marginTop: 6,

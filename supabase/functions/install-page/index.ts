@@ -9,7 +9,11 @@ const BUNDLE_TITLE = 'LifeOS'
 
 Deno.serve((_req) => {
   const base = Deno.env.get('SUPABASE_URL') ?? ''
-  const manifestUrl = `${base}/storage/v1/object/public/builds/manifest.plist`
+  // Point at the ota-manifest Edge Function (serves application/xml), NOT the
+  // Storage .plist — Storage force-serves .plist as text/plain + nosniff, which
+  // iOS rejects during itms-services (Safari shows the raw XML instead of the
+  // install sheet). The IPA itself stays on Storage.
+  const manifestUrl = `${base}/functions/v1/ota-manifest`
   const itms = `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

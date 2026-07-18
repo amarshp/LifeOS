@@ -1,4 +1,5 @@
 import { File } from 'expo-file-system'
+import { fetch as expoFetch } from 'expo/fetch'
 import { supabase } from '../lib/supabase'
 import { resolveLocalRange } from '../lib/time-range'
 import { todayStr } from '../lib/date'
@@ -142,6 +143,128 @@ export async function sendMessage(
     break
   }
   throw new Error(lastMessage)
+}
+
+export interface StreamHandlers {
+  /** Fires per tool call with a live human label ("Scheduling …", "Thinking…"). */
+  onStep?: (label: string) => void
+  /** Abort to stop waiting for the turn (server work already in flight may still commit). */
+  signal?: AbortSignal
+}
+
+/**
+ * Streaming variant of `sendMessage`: opens an SSE connection to plan-chat and
+ * reports each tool step live, resolving with the final turn. Uses `expo/fetch`
+ * (RN's built-in fetch can't stream) and manually attaches auth — `invoke` does
+ * that for us but buffers the whole response, defeating streaming.
+ *
+ * Retry safety mirrors `sendMessage`: a clean transport failure (never reached the
+ * server) is safe to resend, but any response we DID get back — including a mid-
+ * stream error — may mean the agent already mutated data, so we never auto-retry.
+ */
+export async function sendMessageStream(
+  date: string,
+  messages: ChatMessage[],
+  expectedSleepHours: number | undefined,
+  handlers: StreamHandlers = {},
+): Promise<ChatTurn> {
+  const { data: sess } = await supabase.auth.getSession()
+  const token = sess.session?.access_token
+  if (!token) throw new Error('You’re signed out — sign back in to keep planning.')
+  const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL
+  const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY
+  if (!baseUrl || !anon) throw new Error('plan-chat is not configured')
+
+  let res: Response
+  try {
+    res = await expoFetch(`${baseUrl}/functions/v1/plan-chat`, {
+      method: 'POST',
+      signal: handlers.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`, // RLS: without this the fn sees no user
+        apikey: anon,
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        date,
+        messages,
+        timezone: deviceTimezone(),
+        expected_sleep_hours: expectedSleepHours,
+        stream: true,
+      }),
+    }) as unknown as Response
+  } catch (e) {
+    // Aborted (user hit stop) — rethrow as-is so the caller can distinguish it
+    // from a real failure. expo/fetch throws a generic error on abort, so check
+    // the signal, not the error name.
+    if (handlers.signal?.aborted || (e instanceof Error && e.name === 'AbortError')) throw e
+    const raw = e instanceof Error ? e.message : String(e ?? 'Request failed')
+    // Transport failure — request never reached the server, so a resend is safe.
+    throw new Error(TRANSPORT_ERR_RE.test(raw) ? 'Connection dropped — try again.' : raw)
+  }
+
+  if (!res.ok) {
+    // Server WAS reached and may have already mutated data — surface, never auto-retry.
+    let serverMsg = ''
+    try {
+      const body = await res.json()
+      serverMsg = typeof body?.error === 'string' ? body.error : ''
+    } catch {
+      /* not JSON */
+    }
+    const timedOut = res.status === 504 || res.status === 408 || /took too long/i.test(serverMsg)
+    if (timedOut) {
+      throw new Error('The planner is taking longer than usual — your changes may still be saving. Give it a moment, then pull to refresh before resending so you don’t double-apply.')
+    }
+    throw new Error(serverMsg || `The planner hit a server error (${res.status}). Please try again.`)
+  }
+
+  const reader = (res.body as ReadableStream<Uint8Array> | null)?.getReader()
+  if (!reader) throw new Error('The planner returned no stream. Please try again.')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let result: ChatTurn | null = null
+  let streamErr: string | null = null
+
+  // SSE frames are separated by a blank line; each frame has "event:" / "data:" lines.
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let sep: number
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, sep)
+      buffer = buffer.slice(sep + 2)
+      let event = 'message'
+      let data = ''
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim()
+        else if (line.startsWith('data:')) data += line.slice(5).trim()
+      }
+      if (!data) continue
+      let payload: { label?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string }
+      try {
+        payload = JSON.parse(data)
+      } catch {
+        continue
+      }
+      if (event === 'step') handlers.onStep?.(payload.label ?? '')
+      else if (event === 'error') streamErr = payload.error ?? 'plan-chat failed'
+      else if (event === 'done') {
+        result = {
+          reply: payload.reply ?? '',
+          plan: payload.plan ?? null,
+          actions: Array.isArray(payload.actions) ? (payload.actions as string[]) : [],
+          model: payload.model ?? 'unknown',
+        }
+      }
+    }
+  }
+
+  if (streamErr) throw new Error(streamErr)
+  if (!result) throw new Error('The planner stopped unexpectedly. Pull to refresh before resending.')
+  return result
 }
 
 const AUDIO_MIME: Record<string, string> = {
