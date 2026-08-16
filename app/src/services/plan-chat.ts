@@ -51,7 +51,9 @@ export interface ProposedPlan {
 
 export interface ChatTurn {
   reply: string
-  plan: ProposedPlan | null
+  // undefined = the model didn't touch the plan this turn (caller should leave
+  // its current plan state alone); null = explicitly cleared; object = set/revised.
+  plan: ProposedPlan | null | undefined
   /** Human-readable log of real data changes the agent made this turn. */
   actions: string[]
   model: string
@@ -148,6 +150,8 @@ export async function sendMessage(
 export interface StreamHandlers {
   /** Fires per tool call with a live human label ("Scheduling …", "Thinking…"). */
   onStep?: (label: string) => void
+  /** Fires per chunk of the final reply as the model writes it (word-by-word). */
+  onToken?: (chunk: string) => void
   /** Abort to stop waiting for the turn (server work already in flight may still commit). */
   signal?: AbortSignal
 }
@@ -243,18 +247,21 @@ export async function sendMessageStream(
         else if (line.startsWith('data:')) data += line.slice(5).trim()
       }
       if (!data) continue
-      let payload: { label?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string }
+      let payload: { label?: string; chunk?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string }
       try {
         payload = JSON.parse(data)
       } catch {
         continue
       }
       if (event === 'step') handlers.onStep?.(payload.label ?? '')
+      else if (event === 'token') handlers.onToken?.(payload.chunk ?? '')
       else if (event === 'error') streamErr = payload.error ?? 'plan-chat failed'
       else if (event === 'done') {
         result = {
           reply: payload.reply ?? '',
-          plan: payload.plan ?? null,
+          // 'plan' in payload distinguishes "omitted — unchanged" (server sent
+          // no key at all this turn) from an explicit null ("cleared").
+          plan: 'plan' in payload ? (payload.plan ?? null) : undefined,
           actions: Array.isArray(payload.actions) ? (payload.actions as string[]) : [],
           model: payload.model ?? 'unknown',
         }

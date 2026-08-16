@@ -64,7 +64,13 @@ function fmtHHMM(hhmm: string): string {
  *  agent made on that turn — rendered as ground truth so the model's prose can't
  *  claim a change that didn't happen. The `actions` field is UI-only; the edge
  *  function strips it before sending history back to the model. */
-type UiMessage = ChatMessage & { actions?: string[] }
+type UiMessage = ChatMessage & {
+  actions?: string[]
+  /** Set only on a failed voice transcription: the still-valid recording's uri,
+   *  so the bubble can offer "Retry" without re-recording. UI-only, stripped by
+   *  the same server-side {role, content} sanitize as `actions`. */
+  voiceRetryUri?: string
+}
 
 export default function PlanScreen() {
   const { colors, expectedSleepHours } = useSettings()
@@ -76,9 +82,12 @@ export default function PlanScreen() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   // Live streaming state: the agent's current step label + seconds elapsed, so
-  // the user sees real progress and time — not just a spinner.
+  // the user sees real progress and time — not just a spinner. Once the model
+  // starts writing its final reply, `streamingText` grows token-by-token and
+  // is shown in place of the step/spinner (real word-by-word streaming).
   const [step, setStep] = useState('')
   const [elapsed, setElapsed] = useState(0)
+  const [streamingText, setStreamingText] = useState('')
   const abortRef = useRef<AbortController | null>(null)
   // Messages typed while a turn is in flight — flushed in order when it finishes.
   const queueRef = useRef<string[]>([])
@@ -120,6 +129,18 @@ export default function PlanScreen() {
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+  // Mirror the plan too: a turn where the model didn't touch the plan (no
+  // propose_plan/clear_plan call) reports `plan: undefined` and must NOT
+  // clobber whatever's already on screen — this ref is what "already on
+  // screen" means without making runTurn depend on (and re-create on) `plan`.
+  const planRef = useRef<ProposedPlan | null>(null)
+  useEffect(() => {
+    planRef.current = plan
+  }, [plan])
+  // Set synchronously inside the onToken callback (not just via setStreamingText)
+  // so the abort/catch handler can read the latest streamed text without racing
+  // React's batched state updates.
+  const streamingTextRef = useRef('')
 
   // Tick the elapsed-time counter while a turn streams.
   useEffect(() => {
@@ -258,6 +279,8 @@ export default function PlanScreen() {
       setMessages(next)
       setStep('Thinking…')
       setSending(true)
+      streamingTextRef.current = ''
+      setStreamingText('')
       scrollToEnd()
       const controller = new AbortController()
       abortRef.current = controller
@@ -265,12 +288,19 @@ export default function PlanScreen() {
         const turn = await sendMessageStream(effectiveDate, next, expectedSleepHours, {
           signal: controller.signal,
           onStep: (label) => setStep(label),
+          onToken: (chunk) => {
+            streamingTextRef.current += chunk
+            setStreamingText((t) => t + chunk)
+          },
         })
         const withReply: UiMessage[] = [...next, { role: 'assistant', content: turn.reply, actions: turn.actions }]
         setMessages(withReply)
-        setPlan(turn.plan)
+        // turn.plan is undefined on a turn that didn't call propose_plan/clear_plan
+        // — keep whatever's already on screen instead of clobbering it with null.
+        const resolvedPlan = turn.plan !== undefined ? turn.plan : planRef.current
+        if (turn.plan !== undefined) setPlan(turn.plan)
         setModel(turn.model)
-        persistSession(withReply, turn.plan, effectiveDate)
+        persistSession(withReply, resolvedPlan, effectiveDate)
         // Agent changed real data (timers/blocks) → refresh Home/Day views.
         if (turn.actions.length > 0) emitTimerChange()
         scrollToEnd()
@@ -282,6 +312,17 @@ export default function PlanScreen() {
         // not a named AbortError), so name-matching alone would miss it.
         if (controller.signal.aborted) {
           emitTimerChange()
+          // Keep whatever the model had already streamed out instead of
+          // discarding it — Stop cancels waiting for the REST of the reply,
+          // not the words already shown.
+          if (streamingTextRef.current) {
+            // Mark it as cut off — otherwise this fragment goes back to the
+            // model next turn looking like a deliberately finished reply.
+            const partial = `${streamingTextRef.current}\n\n_(stopped)_`
+            const withPartial: UiMessage[] = [...next, { role: 'assistant', content: partial }]
+            setMessages(withPartial)
+            persistSession(withPartial, planRef.current, effectiveDate)
+          }
           return null
         }
         const msg = e instanceof Error ? e.message : 'Something went wrong'
@@ -291,6 +332,8 @@ export default function PlanScreen() {
         abortRef.current = null
         setSending(false)
         setStep('')
+        streamingTextRef.current = ''
+        setStreamingText('')
         scrollToEnd()
       }
     },
@@ -354,6 +397,31 @@ export default function PlanScreen() {
     recorder.record()
   }, [recorder, transcribing, sending])
 
+  // Transcribe a recording and send it. On failure the recording is NOT
+  // discarded: the uri rides along on an inline error bubble (rendered like any
+  // other turn error, no blocking Alert) so a tap on "Retry" re-transcribes the
+  // same audio instead of forcing a full re-record. `runTurn` already strips
+  // ⚠️-prefixed bubbles before the next real send, so a stale retry bubble
+  // can't leak into the conversation sent to the model.
+  const transcribeAndSend = useCallback(async (uri: string) => {
+    if (transcribing || sending) return // already mid-turn — ignore a double-tapped Retry
+    setMessages((m) => m.filter((msg) => msg.voiceRetryUri !== uri))
+    try {
+      setTranscribing(true)
+      const text = await transcribe(uri)
+      if (text) {
+        await send(text)
+      } else {
+        setMessages((m) => [...m, { role: 'assistant', content: "⚠️ Didn't catch anything — hold the mic and try again, or tap Retry.", voiceRetryUri: uri }])
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Transcription failed'
+      setMessages((m) => [...m, { role: 'assistant', content: `⚠️ ${msg}`, voiceRetryUri: uri }])
+    } finally {
+      setTranscribing(false)
+    }
+  }, [send, transcribing, sending])
+
   const endHold = useCallback(async (cancelled = false) => {
     if (!holdRef.current) return
     holdRef.current = false
@@ -371,18 +439,13 @@ export default function PlanScreen() {
       return // slid away — discard the recording
     }
     if (heldMs < 500) return // accidental tap — nothing worth transcribing
-    try {
-      setTranscribing(true)
-      const uri = recorder.uri
-      if (!uri) throw new Error('No audio captured')
-      const text = await transcribe(uri)
-      if (text) await send(text)
-    } catch (e) {
-      Alert.alert('Voice', e instanceof Error ? e.message : 'Transcription failed')
-    } finally {
-      setTranscribing(false)
+    const uri = recorder.uri
+    if (!uri) {
+      setMessages((m) => [...m, { role: 'assistant', content: '⚠️ No audio captured — try holding the mic a little longer.' }])
+      return
     }
-  }, [recorder, send])
+    await transcribeAndSend(uri)
+  }, [recorder, transcribeAndSend])
 
   // Hold = record; slide left while holding = cancel (WhatsApp-style).
   // Raw touch handlers, NOT a Pan gesture: Pan needed movement to activate, so
@@ -430,6 +493,105 @@ export default function PlanScreen() {
       { text: 'Remove', style: 'destructive', onPress: doIt },
     ])
   }, [])
+
+  // True if any message from `index` onward made real, non-reversible changes
+  // (started a timer, added a block, etc.) — editing/regenerating past one of
+  // these doesn't undo it, so the user needs to know before those get dropped
+  // from the visible chat.
+  const hasActionsFrom = useCallback((index: number) => {
+    return messagesRef.current.slice(index).some((m) => m.role === 'assistant' && m.actions && m.actions.length > 0)
+  }, [])
+
+  const actionsFrom = useCallback((index: number) => {
+    return messagesRef.current.slice(index).flatMap((m) => m.actions ?? [])
+  }, [])
+
+  // Edit a user message: truncate back to it (same as delete-from-here) and
+  // load its text into the input bar for the user to change and resend.
+  const editMessage = useCallback((index: number) => {
+    const target = messagesRef.current[index]
+    if (!target || target.role !== 'user') return
+    const proceed = () => {
+      tts.stop()
+      const trimmed = messagesRef.current.slice(0, index)
+      setMessages(trimmed)
+      messagesRef.current = trimmed
+      setPlan(null)
+      setInput(target.content)
+      if (sessionIdRef.current) {
+        if (trimmed.length === 0) {
+          chatSessionsService.deleteSession(sessionIdRef.current).catch(() => {})
+          sessionIdRef.current = null
+        } else {
+          chatSessionsService.updateSession(sessionIdRef.current, { messages: trimmed, plan: null }).catch(() => {})
+        }
+      }
+    }
+    if (hasActionsFrom(index)) {
+      const acts = actionsFrom(index)
+      Alert.alert(
+        'Edit message',
+        `This turn made real changes:\n${acts.map((a) => `• ${a}`).join('\n')}\n\nEditing removes them from the chat but does NOT undo them.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Edit anyway', style: 'destructive', onPress: proceed },
+        ],
+      )
+    } else {
+      proceed()
+    }
+  }, [hasActionsFrom, actionsFrom])
+
+  // Regenerate the last assistant reply: drop it, re-ask the same user message.
+  const regenerate = useCallback(() => {
+    if (sending || transcribing) return
+    const msgs = messagesRef.current
+    const last = msgs[msgs.length - 1]
+    if (!last || last.role !== 'assistant') return
+    const userIdx = msgs.length - 2
+    const userMsg = msgs[userIdx]
+    if (!userMsg || userMsg.role !== 'user') return
+    const proceed = () => {
+      tts.stop()
+      const trimmed = msgs.slice(0, userIdx)
+      setMessages(trimmed)
+      // runTurn reads messagesRef synchronously (before the mirroring effect
+      // would normally run) — set it directly so it doesn't resend stale history.
+      messagesRef.current = trimmed
+      void runTurn(userMsg.content)
+    }
+    if (last.actions && last.actions.length > 0) {
+      Alert.alert(
+        'Regenerate reply',
+        `This reply made real changes:\n${last.actions.map((a) => `• ${a}`).join('\n')}\n\nRegenerating asks the assistant again and may repeat them.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Regenerate', style: 'destructive', onPress: proceed },
+        ],
+      )
+    } else {
+      proceed()
+    }
+  }, [sending, transcribing, runTurn])
+
+  // Long-press a message: plain assistant messages keep the old single-confirm
+  // delete; user messages and the LAST assistant reply get an options menu
+  // (Edit/Regenerate are only meaningful there).
+  const handleLongPress = useCallback((index: number) => {
+    const m = messagesRef.current[index]
+    if (!m) return
+    const isLastAssistant = m.role === 'assistant' && index === messagesRef.current.length - 1
+    if (m.role !== 'user' && !isLastAssistant) {
+      deleteFromMessage(index)
+      return
+    }
+    const buttons: Array<{ text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }> = []
+    if (m.role === 'user') buttons.push({ text: 'Edit', onPress: () => editMessage(index) })
+    if (isLastAssistant) buttons.push({ text: 'Regenerate', onPress: () => regenerate() })
+    buttons.push({ text: 'Remove from here', style: 'destructive', onPress: () => deleteFromMessage(index) })
+    buttons.push({ text: 'Cancel', style: 'cancel' })
+    Alert.alert('Message options', undefined, buttons)
+  }, [deleteFromMessage, editMessage, regenerate])
 
   const apply = useCallback(async () => {
     if (!plan || applying) return
@@ -611,7 +773,7 @@ export default function PlanScreen() {
         {messages.map((m, i) => (
           <Pressable
             key={i}
-            onLongPress={() => deleteFromMessage(i)}
+            onLongPress={() => handleLongPress(i)}
             delayLongPress={400}
             style={[
               styles.bubble,
@@ -628,17 +790,36 @@ export default function PlanScreen() {
                 ))}
               </View>
             )}
+            {m.voiceRetryUri && (
+              <Pressable
+                onPress={() => void transcribeAndSend(m.voiceRetryUri!)}
+                hitSlop={8}
+                style={[styles.retryChip, { borderColor: ACCENT }]}
+              >
+                <Text style={[styles.retryChipText, { color: ACCENT }]}>Retry</Text>
+              </Pressable>
+            )}
           </Pressable>
         ))}
 
         {sending && (
           <View style={[styles.bubble, styles.aiBubble, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
-            <View style={styles.thinkingRow}>
-              <ActivityIndicator color={colors.text3} />
-              <Text style={[styles.thinkingLabel, { color: colors.text2 }]} numberOfLines={1}>
-                {step || 'Thinking…'}
-              </Text>
-              <Text style={[styles.thinkingTime, { color: colors.text4 }]}>{elapsed}s</Text>
+            <View style={styles.streamRow}>
+              <View style={{ flex: 1 }}>
+                {streamingText ? (
+                  // The model has started writing its reply — show it growing
+                  // word-by-word instead of the step spinner.
+                  <Text style={[styles.bubbleText, { color: colors.text1 }]}>{streamingText}</Text>
+                ) : (
+                  <View style={styles.thinkingRow}>
+                    <ActivityIndicator color={colors.text3} />
+                    <Text style={[styles.thinkingLabel, { color: colors.text2 }]} numberOfLines={1}>
+                      {step || 'Thinking…'}
+                    </Text>
+                    <Text style={[styles.thinkingTime, { color: colors.text4 }]}>{elapsed}s</Text>
+                  </View>
+                )}
+              </View>
               <Pressable onPress={stop} hitSlop={8} style={[styles.stopBtn, { borderColor: colors.border2 }]}>
                 <View style={[styles.stopSquare, { backgroundColor: colors.text2 }]} />
               </Pressable>
@@ -861,6 +1042,9 @@ const styles = StyleSheet.create({
   bubbleText: { fontSize: 15, fontFamily: fonts.ui, lineHeight: 22 },
   actionLog: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, gap: 2 },
   actionLine: { fontSize: 12, fontFamily: fonts.ui, lineHeight: 17 },
+  retryChip: { marginTop: 8, alignSelf: 'flex-start', borderWidth: 1, borderRadius: 12, paddingVertical: 4, paddingHorizontal: 10 },
+  retryChipText: { fontSize: 12, fontFamily: fonts.ui, fontWeight: '600' },
+  streamRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   thinkingLabel: { flex: 1, fontSize: 14, fontFamily: fonts.ui },
   thinkingTime: { fontSize: 12, fontFamily: fonts.ui, fontVariant: ['tabular-nums'] },

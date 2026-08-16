@@ -137,53 +137,6 @@ function todoNextDueAfter(recurrence: string, days: number[] | null, after: stri
 
 // ─── Structured output contract ───────────────────────────────────────────────
 
-const RESPONSE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    reply: {
-      type: 'string',
-      description: 'Conversational reply to the user (questions, suggestions, confirmations).',
-    },
-    plan: {
-      type: ['object', 'null'],
-      additionalProperties: false,
-      properties: {
-        title: { type: 'string' },
-        items: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              title: { type: 'string' },
-              start_time: { type: 'string', description: '24h local clock, "HH:MM".' },
-              end_time: { type: 'string', description: '24h local clock, "HH:MM".' },
-              category_id: {
-                type: ['string', 'null'],
-                description: 'MUST be one of the provided category ids, or null if none fits.',
-              },
-              todo_id: {
-                type: ['string', 'null'],
-                description: 'If this item schedules one of the BACKLOG TASKS, set its todo id; else null. Never invent an id.',
-              },
-              flexibility: {
-                type: 'string',
-                enum: ['fixed', 'flexible', 'protected'],
-                description: 'fixed = appointment/meeting (never move without asking) · protected = sleep/meals/routines (move only with callout) · flexible = everything else.',
-              },
-              notes: { type: ['string', 'null'] },
-            },
-            required: ['title', 'start_time', 'end_time', 'category_id', 'todo_id', 'flexibility', 'notes'],
-          },
-        },
-      },
-      required: ['title', 'items'],
-    },
-  },
-  required: ['reply', 'plan'],
-} as const
-
 // ─── Agent tools (all data access via the user-scoped client → RLS applies) ──
 
 const TIME_ARG_NOTE =
@@ -309,7 +262,7 @@ const TOOLS = [
     function: {
       name: 'add_calendar_block',
       description:
-        `Add ONE schedule block directly (for quick edits: "add a dentist visit at 4"). For building/refining a WHOLE day plan, use the plan field of your reply instead. ${TIME_ARG_NOTE}`,
+        `Add ONE schedule block directly (for quick edits: "add a dentist visit at 4"). For building/refining a WHOLE day plan, call propose_plan instead. ${TIME_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: {
@@ -510,6 +463,55 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_plan',
+      description:
+        "Show the user a concrete schedule for the target date — the proposal card they can Apply. Call this whenever you have a full or partial day plan to show, on the FIRST draft and on every later refinement. Do NOT call it on turns where you're just chatting or answering a question with no new/changed schedule — the plan you last proposed stays on screen untouched until you call this again.",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                start_time: { type: 'string', description: '24h local clock, "HH:MM".' },
+                end_time: { type: 'string', description: '24h local clock, "HH:MM".' },
+                category_id: {
+                  type: ['string', 'null'],
+                  description: 'MUST be one of the provided category ids, or null if none fits.',
+                },
+                todo_id: {
+                  type: ['string', 'null'],
+                  description: 'If this item schedules one of the BACKLOG TASKS, its todo id; else null. Never invent an id.',
+                },
+                flexibility: {
+                  type: 'string',
+                  enum: ['fixed', 'flexible', 'protected'],
+                  description: 'fixed = appointment/meeting (never move without asking) · protected = sleep/meals/routines (move only with callout) · flexible = everything else.',
+                },
+                notes: { type: ['string', 'null'] },
+              },
+              required: ['title', 'start_time', 'end_time', 'category_id', 'todo_id', 'flexibility', 'notes'],
+            },
+          },
+        },
+        required: ['title', 'items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'clear_plan',
+      description: 'Remove the currently proposed plan card (the user asked to scrap it / start over). Does not touch calendar blocks already Applied — only the not-yet-applied proposal.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
 ]
 
 interface ToolCtx {
@@ -532,6 +534,11 @@ interface ToolCtx {
   // APNs push-to-start AFTER the tool loop (a backgrounded/closed app can't start
   // a Live Activity locally — the push is the only way the card appears).
   startedEntry?: { id: string; title: string; startMs: number }
+  // undefined = untouched this turn (client keeps whatever plan it already has),
+  // null = explicitly cleared (clear_plan), object = proposed/revised this turn.
+  // Set by propose_plan/clear_plan; JSON.stringify drops the key entirely when
+  // undefined, which is exactly the "untouched" signal the client relies on.
+  plan?: { title: string; items: Array<Record<string, unknown>> } | null
 }
 
 /**
@@ -1185,6 +1192,39 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       return { ok: true }
     }
 
+    case 'propose_plan': {
+      const title = rawStr('title') ?? ''
+      const rawItems = Array.isArray(args.items) ? (args.items as Record<string, unknown>[]) : []
+      const HHMM = /^\d{1,2}:\d{2}$/
+      const items = rawItems
+        .filter((it) => HHMM.test(String(it.start_time ?? '')) && HHMM.test(String(it.end_time ?? '')))
+        .map((it) => {
+          const cid = it.category_id
+          const tid = it.todo_id
+          return {
+            title: typeof it.title === 'string' ? it.title : '',
+            start_time: it.start_time as string,
+            end_time: it.end_time as string,
+            category_id: typeof cid === 'string' && ctx.allowedCategoryIds.has(cid) ? cid : null,
+            todo_id: typeof tid === 'string' && ctx.allowedTodoIds.has(tid) ? tid : null,
+            flexibility: typeof it.flexibility === 'string' ? it.flexibility : 'flexible',
+            notes: typeof it.notes === 'string' ? it.notes : null,
+          }
+        })
+      // Every item failed the HH:MM check — don't replace a good plan (or show
+      // an empty one) with junk; let the model see the failure and retry.
+      if (rawItems.length > 0 && items.length === 0) {
+        return { error: 'every item was missing a valid start_time/end_time ("HH:MM") — retry with real times' }
+      }
+      ctx.plan = { title, items }
+      return { ok: true, item_count: items.length }
+    }
+
+    case 'clear_plan': {
+      ctx.plan = null
+      return { ok: true }
+    }
+
     default:
       return { error: `unknown tool ${name}` }
   }
@@ -1391,9 +1431,9 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - DATED COMMITMENT → BLOCK, NEVER TODO: if the user gives a specific day AND time ("Monday 6–7:30 PM interview", "Tuesday 6pm system design round", "Sunday 7pm meet Bharadwaj") it is a scheduled event — resolve the weekday to its date via UPCOMING DAYS and call add_calendar_block (flexibility fixed) on that date. Do NOT put a day+time commitment into the backlog with add_todo. Only genuinely timeless items ("sometime", "eventually", no day) go to add_todo. If several commitments come in one message, add_calendar_block for each on its correct date.
 - REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.
 - DEV NOTES: whenever the user complains about the APP ITSELF or wishes it worked differently ("this time is wrong", "it's slow", "I want a button that…"), call log_feedback with a crisp title — silently, then respond normally. These are for the developer, not the user's task list; never add_todo for app bugs.
-- Building or reworking the WHOLE day's plan → use the "plan" field of your reply (the user taps Apply), NOT add_calendar_block calls.
+- Building or reworking the WHOLE day's plan → call propose_plan (the user taps Apply), NOT add_calendar_block calls.
 - ONE ACTIVE PLAN: Apply REPLACES every non-fixed, non-recurring block for the day (future-only when replanning today) — there are never two parallel schedules. So your plan must be COMPLETE: re-include anything from ALREADY PLANNED that should survive (meals, sleep, tasks you agree with) — only [FIXED] appointments and recurring routines persist on their own.
-- CONFIRM OVERRIDES: if ALREADY PLANNED has meaningful content and the user asks for a NEW plan (not a tweak), confirm once before emitting the plan field: name what exists ("you already have gym at 6 and dinner at 8 planned") and ask whether to replace or work around it. Skip the confirmation only when the user already said to redo/replace/replan.
+- CONFIRM OVERRIDES: if ALREADY PLANNED has meaningful content and the user asks for a NEW plan (not a tweak), confirm once before calling propose_plan: name what exists ("you already have gym at 6 and dinner at 8 planned") and ask whether to replace or work around it. Skip the confirmation only when the user already said to redo/replace/replan.
 - PLAN FROM CURRENT STATE: read CURRENT STATE before planning. A running entry tells you where the user is and what they're doing — if they're out (commuting, at a restaurant, at the gym), the plan's first items must get them from THERE to the next thing (finish up, travel home), never assume they're at home/office. Same for replanning: start from the running activity, not from an imagined idle state.
 - NO GAPS: a day plan is a continuous timeline — consecutive items should touch (buffers/travel are themselves items). If the user's own outline leaves a gap of 30+ minutes, do not silently keep it: either ask ONE question about how to fill it or propose something explicit (rest, buffer, free time) so every stretch is accounted for up to sleep.
 - GAP CHECK IS DATA, NOT EYEBALL: when reviewing/backfilling a day, the "gaps" array from list_time_entries is the source of truth for uncovered spans — enumerate EVERY entry in it (a sleep→next-activity boundary counts like any other). Never claim a day is "continuous"/"gap-free" unless that array is empty. Fill each gap (ask if unsure what it was), then re-list to confirm gaps is now empty before saying so.
@@ -1403,15 +1443,15 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - NEVER CLAIM AN ACTION YOU DIDN'T TAKE: only say you added/moved/deleted/scheduled something if a tool call for it actually succeeded THIS turn. The exact list of real changes is shown to the user beneath your reply as a verified log — if you describe a change that isn't in it, you are caught lying. If you intend to do something but haven't called the tool yet, call the tool now; don't narrate it as done.
 - Never invent ids: only use entry/block/category ids returned by tools or listed above.
 
-THE PLAN FIELD (structured output):
-- Set "plan" to null until you have a concrete, useful schedule. Once you do, fill it AND keep refining it on later turns as the user adjusts.
+THE propose_plan TOOL:
+- Call propose_plan whenever you have a concrete, useful schedule to show — the first draft AND every later refinement. Do NOT call it on a turn where you're just chatting or answering a question with no schedule change: the plan you last proposed stays on screen exactly as it was until you call propose_plan again. If the user asks to scrap the plan entirely, call clear_plan instead.
 - Every item needs start_time and end_time as 24-hour "HH:MM" local clock times.
 - Set category_id to the matching category's id from the list above, or null if nothing fits. Never invent an id.
 - Set todo_id whenever an item schedules one of the backlog tasks (including tasks you just added with add_todo) — that links the block to the task so doing it completes the task.
 - Cover the meaningful parts of the day in order. Items must not overlap UNLESS the user explicitly wants things in parallel.
 - PARALLEL ITEMS: when the user says things run in parallel / at the same time / while doing X, keep BOTH items at their full stated times even though they overlap (e.g. "study 7:30–10, calls 7:30–8 and 8–8:30 in parallel" → Study 19:30–22:00 PLUS Call 1 19:30–20:00 PLUS Call 2 20:00–20:30). Never shrink, split, or shift an item to avoid an overlap the user asked for. At most 2 items may run at any moment.
 - SLEEP: the user's nightly sleep target is ${expectedSleepHours} hours. When they mention a bedtime (e.g. "I'll sleep at 11:15 PM"), add a Sleep item starting then and lasting the full ${expectedSleepHours} hours — the end_time will be an early-morning time smaller than the start_time (e.g. 23:15 → 07:45). That is the ONLY item allowed to cross midnight; never cut sleep short at midnight.
-- When you include a plan, your "reply" should briefly summarize it and ask if they want changes.`
+- After calling propose_plan, your reply should briefly summarize the plan and ask if they want changes. Keep replying in plain conversational text — never describe the schedule as JSON or mention the tool by name.`
 }
 
 // ─── Turn runner (shared by JSON and streaming paths) ───────────────────────
@@ -1466,6 +1506,10 @@ function stepLabel(name: string, args: Record<string, unknown>): string {
       return 'Writing your journal…'
     case 'log_feedback':
       return 'Noting that for the developers…'
+    case 'propose_plan':
+      return 'Drafting your schedule…'
+    case 'clear_plan':
+      return 'Clearing the plan…'
     default:
       return 'Working…'
   }
@@ -1473,73 +1517,155 @@ function stepLabel(name: string, args: Record<string, unknown>): string {
 
 interface TurnResult {
   reply: string
-  plan: null | { title: string; items: Array<Record<string, unknown>> }
+  // undefined → omitted from the wire payload entirely (JSON.stringify drops
+  // it) — the client reads a missing key as "plan unchanged this turn", vs an
+  // explicit null meaning "cleared". See ToolCtx.plan.
+  plan?: null | { title: string; items: Array<Record<string, unknown>> }
   actions: string[]
   model: string
 }
 
-/** Run the OpenAI tool loop to completion, then finalize (plan sanitize +
- *  push-to-start). `onStep` fires a live progress label per tool call; it's a
- *  no-op in the JSON path. Throws HttpError on any failure. */
+interface StreamToolCall {
+  id: string
+  name: string
+  arguments: string
+}
+
+/** One streamed OpenAI chat/completions call. Emits each text token via
+ *  `onTextDelta` as it arrives (no-op in the JSON path) and returns the
+ *  assembled text + any tool calls the model made, once the stream ends. */
+async function streamOpenAICompletion(
+  // deno-lint-ignore no-explicit-any
+  convo: any[],
+  tools: typeof TOOLS | undefined,
+  openaiKey: string,
+  onTextDelta: (chunk: string) => void,
+): Promise<{ content: string; toolCalls: StreamToolCall[]; finishReason: string | null }> {
+  let res: Response
+  try {
+    res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        reasoning_effort: REASONING_EFFORT,
+        max_completion_tokens: 4000,
+        messages: convo,
+        stream: true,
+        ...(tools ? { tools } : {}),
+      }),
+    })
+  } catch (e) {
+    const timedOut = e instanceof Error && e.name === 'TimeoutError'
+    throw new HttpError(502, timedOut ? 'The assistant took too long — please try again.' : `openai request failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new HttpError(502, `openai error ${res.status}`, detail)
+  }
+
+  const reader = res.body?.getReader()
+  if (!reader) throw new HttpError(502, 'openai returned no stream')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+  const toolCallsByIndex = new Map<number, StreamToolCall>()
+  let finishReason: string | null = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim()
+      buffer = buffer.slice(nl + 1)
+      if (!line.startsWith('data:')) continue
+      const data = line.slice(5).trim()
+      if (data === '[DONE]') continue
+      // deno-lint-ignore no-explicit-any
+      let chunk: any
+      try {
+        chunk = JSON.parse(data)
+      } catch {
+        continue
+      }
+      const choice = chunk.choices?.[0]
+      if (!choice) continue
+      if (choice.finish_reason) finishReason = choice.finish_reason
+      const delta = choice.delta ?? {}
+      if (typeof delta.content === 'string' && delta.content.length > 0) {
+        content += delta.content
+        onTextDelta(delta.content)
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        // deno-lint-ignore no-explicit-any
+        for (const tc of delta.tool_calls as any[]) {
+          const idx = typeof tc.index === 'number' ? tc.index : 0
+          const acc = toolCallsByIndex.get(idx) ?? { id: '', name: '', arguments: '' }
+          if (tc.id) acc.id = tc.id
+          if (tc.function?.name) acc.name += tc.function.name
+          if (typeof tc.function?.arguments === 'string') acc.arguments += tc.function.arguments
+          toolCallsByIndex.set(idx, acc)
+        }
+      }
+    }
+  }
+
+  const toolCalls = Array.from(toolCallsByIndex.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([, v]) => v)
+  return { content, toolCalls, finishReason }
+}
+
+/** Run the OpenAI tool loop to completion. `onStep` fires a live progress
+ *  label per tool call; `onTextDelta` fires per streamed token of the FINAL
+ *  reply (both no-ops in the JSON path). Throws HttpError on any failure. */
 async function runPlanTurn(
   ctx: ToolCtx,
   // deno-lint-ignore no-explicit-any
   convo: any[],
   openaiKey: string,
-  allowedIds: Set<string>,
-  allowedTodoIds: Set<string>,
   onStep: (label: string) => void,
+  onTextDelta: (chunk: string) => void,
 ): Promise<TurnResult> {
-  let content = ''
+  let reply = ''
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const lastRound = round === MAX_TOOL_ROUNDS
     onStep('Thinking…')
-    let openaiRes: Response
-    try {
-      openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${openaiKey}`,
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          reasoning_effort: REASONING_EFFORT,
-          max_completion_tokens: 4000,
-          messages: convo,
-          ...(lastRound ? {} : { tools: TOOLS }),
-          response_format: {
-            type: 'json_schema',
-            json_schema: { name: 'plan_turn', strict: true, schema: RESPONSE_SCHEMA },
-          },
-        }),
+    const { content, toolCalls, finishReason } = await streamOpenAICompletion(
+      convo,
+      lastRound ? undefined : TOOLS,
+      openaiKey,
+      onTextDelta,
+    )
+
+    if (finishReason === 'tool_calls' && toolCalls.length > 0) {
+      // Re-add the assistant's own tool-call turn so the next round (and the
+      // model) sees it, same shape the non-streaming API used to hand back.
+      convo.push({
+        role: 'assistant',
+        content: content || null,
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.arguments },
+        })),
       })
-    } catch (e) {
-      const timedOut = e instanceof Error && e.name === 'TimeoutError'
-      throw new HttpError(502, timedOut ? 'The assistant took too long — please try again.' : `openai request failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    if (!openaiRes.ok) {
-      const detail = await openaiRes.text()
-      throw new HttpError(502, `openai error ${openaiRes.status}`, detail)
-    }
-
-    const completion = await openaiRes.json()
-    const msg = completion.choices?.[0]?.message
-    if (!msg) throw new HttpError(502, 'openai returned no message')
-
-    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-      convo.push(msg)
-      for (const call of msg.tool_calls) {
+      for (const call of toolCalls) {
         let args: Record<string, unknown> = {}
         try {
-          args = JSON.parse(call.function?.arguments ?? '{}')
+          args = JSON.parse(call.arguments || '{}')
         } catch {
           /* leave empty */
         }
-        onStep(stepLabel(call.function?.name ?? '', args))
-        const result = await runTool(ctx, call.function?.name ?? '', args)
+        onStep(stepLabel(call.name, args))
+        const result = await runTool(ctx, call.name, args)
         convo.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -1549,28 +1675,8 @@ async function runPlanTurn(
       continue
     }
 
-    content = msg.content ?? ''
+    reply = content
     break
-  }
-
-  let parsed: { reply: string; plan: null | { title: string; items: Array<Record<string, unknown>> } }
-  try {
-    parsed = JSON.parse(content)
-  } catch {
-    throw new HttpError(502, 'model returned non-JSON', content)
-  }
-
-  // Defensive: drop any category_id / todo_id the model hallucinated (RLS-safe sets).
-  if (parsed.plan) {
-    parsed.plan.items = (parsed.plan.items ?? []).map((it) => {
-      const cid = it.category_id
-      const tid = it.todo_id
-      return {
-        ...it,
-        category_id: typeof cid === 'string' && allowedIds.has(cid) ? cid : null,
-        todo_id: typeof tid === 'string' && allowedTodoIds.has(tid) ? tid : null,
-      }
-    })
   }
 
   // NOTE: no APNs push-to-start here. plan-chat only runs while the app is in the
@@ -1581,7 +1687,7 @@ async function runPlanTurn(
   // client SKIP the local card (reconcile skips push-managed entries); when the
   // foreground push was then suppressed/dropped by iOS, the agent-started timer
   // showed no card at all. Background starts are the voice path's job, not this one.
-  return { reply: parsed.reply, plan: parsed.plan, actions: ctx.actions, model: MODEL }
+  return { reply, plan: ctx.plan, actions: ctx.actions, model: MODEL }
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -1712,8 +1818,9 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const convo: any[] = [{ role: 'system', content: system }, ...cleanMsgs]
 
-  // Streaming path: emit a live `step` event per tool call, then one `done` event
-  // with the full payload. Same tool loop as JSON — only the transport differs.
+  // Streaming path: a live `step` event per tool call, a `token` event per
+  // chunk of the final reply as the model writes it, then one `done` event
+  // with the full payload (final reply text + actions + plan, if touched).
   if (body.stream === true) {
     const enc = new TextEncoder()
     const stream = new ReadableStream({
@@ -1726,8 +1833,12 @@ Deno.serve(async (req) => {
           }
         }
         try {
-          const result = await runPlanTurn(ctx, convo, openaiKey, allowedIds, allowedTodoIds, (label) =>
-            send('step', { label }),
+          const result = await runPlanTurn(
+            ctx,
+            convo,
+            openaiKey,
+            (label) => send('step', { label }),
+            (chunk) => send('token', { chunk }),
           )
           send('done', result)
         } catch (e) {
@@ -1754,7 +1865,7 @@ Deno.serve(async (req) => {
 
   // JSON path (back-compat): run to completion, return the whole payload at once.
   try {
-    const result = await runPlanTurn(ctx, convo, openaiKey, allowedIds, allowedTodoIds, () => {})
+    const result = await runPlanTurn(ctx, convo, openaiKey, () => {}, () => {})
     return json(result)
   } catch (e) {
     const he = e instanceof HttpError ? e : new HttpError(500, e instanceof Error ? e.message : String(e))
