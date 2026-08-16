@@ -285,6 +285,23 @@ const AUDIO_MIME: Record<string, string> = {
   '3gp': 'audio/3gpp',
 }
 
+/** FunctionsHttpError's `.message` is always the generic "Edge Function
+ *  returned a non-2xx status code" — the real server error lives in the
+ *  Response on `.context`. Dig it out so failures are diagnosable. */
+async function invokeErrorMessage(error: unknown, data: { error?: string } | null, fallback: string): Promise<string> {
+  if (data?.error) return String(data.error)
+  const ctx = (error as { context?: Response })?.context
+  if (ctx) {
+    try {
+      const body = await ctx.clone().json()
+      if (typeof body?.error === 'string') return body.error
+    } catch {
+      /* body not JSON */
+    }
+  }
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
 /** Transcribe a recorded clip (file uri) to text via the Whisper relay. */
 export async function transcribe(uri: string): Promise<string> {
   const ext = (uri.split('.').pop() || 'm4a').toLowerCase().split('?')[0]
@@ -300,7 +317,7 @@ export async function transcribe(uri: string): Promise<string> {
       body: { audio_base64: base64, mime, filename },
     })
     if (!error && !data?.error) return (data.text ?? '').trim()
-    lastErr = new Error(error?.message || data?.error || 'plan-transcribe failed')
+    lastErr = new Error(await invokeErrorMessage(error, data, 'plan-transcribe failed'))
   }
   throw lastErr ?? new Error('plan-transcribe failed')
 }
