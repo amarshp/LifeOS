@@ -1196,6 +1196,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       const title = rawStr('title') ?? ''
       const rawItems = Array.isArray(args.items) ? (args.items as Record<string, unknown>[]) : []
       const HHMM = /^\d{1,2}:\d{2}$/
+      const FLEXIBILITY = new Set(['fixed', 'flexible', 'protected'])
       const items = rawItems
         .filter((it) => HHMM.test(String(it.start_time ?? '')) && HHMM.test(String(it.end_time ?? '')))
         .map((it) => {
@@ -1207,7 +1208,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
             end_time: it.end_time as string,
             category_id: typeof cid === 'string' && ctx.allowedCategoryIds.has(cid) ? cid : null,
             todo_id: typeof tid === 'string' && ctx.allowedTodoIds.has(tid) ? tid : null,
-            flexibility: typeof it.flexibility === 'string' ? it.flexibility : 'flexible',
+            flexibility: typeof it.flexibility === 'string' && FLEXIBILITY.has(it.flexibility) ? it.flexibility : 'flexible',
             notes: typeof it.notes === 'string' ? it.notes : null,
           }
         })
@@ -1635,12 +1636,21 @@ async function runPlanTurn(
   onTextDelta: (chunk: string) => void,
 ): Promise<TurnResult> {
   let reply = ''
-  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+  // Rounds 0..MAX_TOOL_ROUNDS-1 get every tool. Round MAX_TOOL_ROUNDS (the
+  // "wrap it up" round) drops the exploratory/action tools but keeps
+  // propose_plan/clear_plan — otherwise a model still mid-plan on that round
+  // is left with no way to report it and silently answers in prose only. One
+  // further no-tools round is the hard stop that guarantees termination.
+  const REPORTING_TOOLS = TOOLS.filter(
+    (t) => t.function.name === 'propose_plan' || t.function.name === 'clear_plan',
+  )
+  for (let round = 0; round <= MAX_TOOL_ROUNDS + 1; round++) {
     const lastRound = round === MAX_TOOL_ROUNDS
+    const finalRound = round === MAX_TOOL_ROUNDS + 1
     onStep('Thinking…')
     const { content, toolCalls, finishReason } = await streamOpenAICompletion(
       convo,
-      lastRound ? undefined : TOOLS,
+      finalRound ? undefined : lastRound ? REPORTING_TOOLS : TOOLS,
       openaiKey,
       onTextDelta,
     )

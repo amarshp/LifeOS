@@ -137,6 +137,12 @@ export default function PlanScreen() {
   useEffect(() => {
     planRef.current = plan
   }, [plan])
+  // Index of the assistant message whose turn last set/changed `plan` — lets
+  // edit/delete-from-here only clear the plan when the removed range is what
+  // produced it, instead of nuking an unrelated plan every time. Infinity
+  // means "some message we don't have turn-level info for" (a resumed
+  // session's saved plan) — conservatively treated as always in range.
+  const planSetAtIndexRef = useRef<number>(-1)
   // Set synchronously inside the onToken callback (not just via setStreamingText)
   // so the abort/catch handler can read the latest streamed text without racing
   // React's batched state updates.
@@ -193,6 +199,7 @@ export default function PlanScreen() {
     sessionIdRef.current = s.id
     setMessages(s.messages)
     setPlan(s.plan)
+    planSetAtIndexRef.current = s.plan ? Infinity : -1
     setDate(s.date)
     setLastUndo(null)
     firstPromptRef.current = s.title
@@ -204,6 +211,7 @@ export default function PlanScreen() {
     sessionIdRef.current = null
     setMessages([])
     setPlan(null)
+    planSetAtIndexRef.current = -1
     setInput('')
     setLastUndo(null)
     setDate(todayStr())
@@ -298,7 +306,10 @@ export default function PlanScreen() {
         // turn.plan is undefined on a turn that didn't call propose_plan/clear_plan
         // — keep whatever's already on screen instead of clobbering it with null.
         const resolvedPlan = turn.plan !== undefined ? turn.plan : planRef.current
-        if (turn.plan !== undefined) setPlan(turn.plan)
+        if (turn.plan !== undefined) {
+          setPlan(turn.plan)
+          planSetAtIndexRef.current = turn.plan ? withReply.length - 1 : -1
+        }
         setModel(turn.model)
         persistSession(withReply, resolvedPlan, effectiveDate)
         // Agent changed real data (timers/blocks) → refresh Home/Day views.
@@ -478,13 +489,20 @@ export default function PlanScreen() {
       tts.stop()
       const trimmed = messagesRef.current.slice(0, index)
       setMessages(trimmed)
-      setPlan(null)
+      const clearsPlan = planSetAtIndexRef.current >= index
+      if (clearsPlan) {
+        setPlan(null)
+        planSetAtIndexRef.current = -1
+      }
       if (sessionIdRef.current) {
         if (trimmed.length === 0) {
           chatSessionsService.deleteSession(sessionIdRef.current).catch(() => {})
           sessionIdRef.current = null
         } else {
-          chatSessionsService.updateSession(sessionIdRef.current, { messages: trimmed, plan: null }).catch(() => {})
+          chatSessionsService.updateSession(
+            sessionIdRef.current,
+            clearsPlan ? { messages: trimmed, plan: null } : { messages: trimmed },
+          ).catch(() => {})
         }
       }
     }
@@ -516,14 +534,21 @@ export default function PlanScreen() {
       const trimmed = messagesRef.current.slice(0, index)
       setMessages(trimmed)
       messagesRef.current = trimmed
-      setPlan(null)
+      const clearsPlan = planSetAtIndexRef.current >= index
+      if (clearsPlan) {
+        setPlan(null)
+        planSetAtIndexRef.current = -1
+      }
       setInput(target.content)
       if (sessionIdRef.current) {
         if (trimmed.length === 0) {
           chatSessionsService.deleteSession(sessionIdRef.current).catch(() => {})
           sessionIdRef.current = null
         } else {
-          chatSessionsService.updateSession(sessionIdRef.current, { messages: trimmed, plan: null }).catch(() => {})
+          chatSessionsService.updateSession(
+            sessionIdRef.current,
+            clearsPlan ? { messages: trimmed, plan: null } : { messages: trimmed },
+          ).catch(() => {})
         }
       }
     }
@@ -637,6 +662,7 @@ export default function PlanScreen() {
     setDate((d) => addLocalDays(d, delta))
     setMessages([])
     setPlan(null)
+    planSetAtIndexRef.current = -1
     setInput('')
     setLastUndo(null)
     sessionIdRef.current = null
