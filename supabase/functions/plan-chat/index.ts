@@ -1296,6 +1296,13 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'web_search': {
       const query = str('query')
       if (!query) return { error: 'query required' }
+      // Cheap backstop, not a real content filter (that'd need another model
+      // call to do properly): a real search query is a handful of words. A
+      // long one is the likely shape of an accidental verbatim dump of the
+      // user's own data (a calendar title, a memory, a todo) into a request
+      // that leaves the app toward a live search backend — reject and make
+      // the model retry with something tighter instead of sending it.
+      if (query.length > 150) return { error: 'query too long — use a short, focused search phrase, not pasted context' }
       try {
         const answer = await webSearchViaGpt(query, openaiKey)
         return { ok: true, answer }
