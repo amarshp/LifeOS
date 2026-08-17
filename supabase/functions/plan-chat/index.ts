@@ -1304,6 +1304,11 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       // was meant to catch. The prompt's explicit instruction not to search
       // the user's own LifeOS data is the actual safeguard; gpt-5.1 already
       // has all of that data in its own context regardless of this tool.
+      // Passive backstop instead: log every query server-side (Edge Function
+      // logs, not a DB table — nothing user-visible, nothing new to secure) so
+      // a leak is reviewable after the fact via `supabase functions logs
+      // plan-chat`, without blocking or degrading legitimate searches.
+      console.log(`[web_search] user=${ctx.userId} query=${JSON.stringify(query)}`)
       try {
         const answer = await webSearchViaGpt(query, openaiKey)
         return { ok: true, answer }
