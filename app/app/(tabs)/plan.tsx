@@ -835,21 +835,26 @@ export default function PlanScreen() {
         {sending && (
           <View style={[styles.bubble, styles.aiBubble, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
             <View style={styles.streamRow}>
-              <View style={{ flex: 1 }}>
-                {streamingText ? (
-                  // The model has started writing its reply — show it growing
-                  // word-by-word instead of the step spinner.
-                  <Text style={[styles.bubbleText, { color: colors.text1 }]}>{streamingText}</Text>
-                ) : (
-                  <View style={styles.thinkingRow}>
-                    <ActivityIndicator color={colors.text3} />
-                    <Text style={[styles.thinkingLabel, { color: colors.text2 }]} numberOfLines={1}>
-                      {step || 'Thinking…'}
-                    </Text>
-                    <Text style={[styles.thinkingTime, { color: colors.text4 }]}>{elapsed}s</Text>
-                  </View>
-                )}
-              </View>
+              {streamingText ? (
+                // The model has started writing its reply — show it growing
+                // word-by-word instead of the step spinner. flex:1 here lets it
+                // wrap within the bubble instead of pushing the stop button out.
+                <Text style={[styles.bubbleText, { color: colors.text1, flex: 1 }]}>{streamingText}</Text>
+              ) : (
+                // No flex:1 on this branch — its content (spinner + short label +
+                // timer) is fixed-size, and a flex:1 child inside a shrink-to-fit
+                // bubble is ambiguous for Yoga on native (worked fine on web's CSS
+                // engine): it was collapsing this row to ~0 width for the whole
+                // thinking phase on-device. Plain content-sized children always
+                // resolve unambiguously.
+                <View style={styles.thinkingRow}>
+                  <ActivityIndicator color={colors.text3} />
+                  <Text style={[styles.thinkingLabel, { color: colors.text2 }]} numberOfLines={1}>
+                    {step || 'Thinking…'}
+                  </Text>
+                  <Text style={[styles.thinkingTime, { color: colors.text4 }]}>{elapsed}s</Text>
+                </View>
+              )}
               <Pressable onPress={stop} hitSlop={8} style={[styles.stopBtn, { borderColor: colors.border2 }]}>
                 <View style={[styles.stopSquare, { backgroundColor: colors.text2 }]} />
               </Pressable>
@@ -1076,7 +1081,7 @@ const styles = StyleSheet.create({
   retryChipText: { fontSize: 12, fontFamily: fonts.ui, fontWeight: '600' },
   streamRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  thinkingLabel: { flex: 1, fontSize: 14, fontFamily: fonts.ui },
+  thinkingLabel: { fontSize: 14, fontFamily: fonts.ui },
   thinkingTime: { fontSize: 12, fontFamily: fonts.ui, fontVariant: ['tabular-nums'] },
   stopBtn: { width: 26, height: 26, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   stopSquare: { width: 9, height: 9, borderRadius: 2 },
