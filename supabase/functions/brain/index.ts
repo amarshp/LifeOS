@@ -56,7 +56,7 @@ function addDaysStr(dateStr: string, days: number): string {
 
 interface DetectedConcern {
   key: string
-  kind: 'gap' | 'drift' | 'commitment' | 'morning' | 'evening' | 'gym-gap' | 'sleep-debt' | 'post-activity-nap'
+  kind: 'gap' | 'drift' | 'commitment' | 'morning' | 'evening' | 'gym-gap' | 'sleep-debt' | 'post-activity-nap' | 'late-diversion'
   title: string
   detail: string
   evidence: string
@@ -72,6 +72,7 @@ const COOLDOWN_MIN: Record<DetectedConcern['kind'], number> = {
   'gym-gap': 24 * 60,
   'sleep-debt': 24 * 60,
   'post-activity-nap': 4 * 60,
+  'late-diversion': 48 * 60,
 }
 
 interface Prefs {
@@ -91,12 +92,13 @@ async function detectConcerns(
   db: SupabaseClient,
   userId: string,
   prefs: Prefs,
-): Promise<DetectedConcern[]> {
+): Promise<{ concerns: DetectedConcern[]; diagnostics: string[] }> {
   const tz = prefs.timezone
   const today = todayLocal(tz)
   const hour = localHour(tz)
   const nowMs = Date.now()
   const out: DetectedConcern[] = []
+  const diagnostics: string[] = []
 
   // One day of context (entries can start yesterday and spill over midnight).
   const sinceIso = new Date(nowMs - 36 * 3600_000).toISOString()
@@ -271,7 +273,70 @@ async function detectConcerns(
     }
   }
 
-  return out
+  // LATE-DIVERSION — a SUSTAINED weekly pattern of starting something
+  // unplanned late at night, surfaced only when it's actually costing
+  // something (sleep debt or gym gap already elevated). Deliberately NOT a
+  // moment-to-moment plan-mismatch push: Amarsh explicitly rejected that as
+  // too noisy (block titles legitimately vary, timing is always tentative
+  // against a plan) — see PLANNING_MODE_SPEC.md §12b. One-off deviation stays
+  // where it already lives: the Agent's evening-review step ("point out ONE
+  // meaningful deviation from the plan"), not a push notification.
+  // "Unplanned" = no calendar_blocks row's time window covers the entry's
+  // start at all — a time-overlap check only, never a title match (titles
+  // are exactly what he said not to trust for this).
+  const sevenDayAgoIso = new Date(nowMs - 7 * 86_400_000).toISOString()
+  const [{ data: weekEntries }, { data: weekBlocks }] = await Promise.all([
+    db.from('time_entries')
+      .select('title, category_id, start_time')
+      .eq('user_id', userId).is('deleted_at', null).gte('start_time', sevenDayAgoIso),
+    db.from('calendar_blocks')
+      .select('start_time, end_time')
+      .eq('user_id', userId).is('deleted_at', null).gte('start_time', sevenDayAgoIso),
+  ])
+  // Wind-down boundary: personal recBedClock minus a ~60min buffer (the
+  // CONSENSUS wind-down window, research/sleep-hygiene-evidence.md §2), or a
+  // fixed fallback until enough personal sleep data exists to compute one.
+  const [bedH, bedM] = (sleepEv.recBedClock ?? '23:00').split(':').map(Number)
+  const lateBoundaryMin = (((bedH * 60 + bedM - 60) % 1440) + 1440) % 1440
+  let lateDiversionCount = 0
+  for (const e of weekEntries ?? []) {
+    const name = (catName(e.category_id as string | null) ?? '').toLowerCase()
+    if (name.includes('sleep') || (e.title as string).toLowerCase().includes('sleep')) continue
+    const startMs = new Date(e.start_time as string).getTime()
+    const localStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(startMs))
+    const [sh, sm] = localStr.split(':').map(Number)
+    const startMin = ((sh % 24) * 60 + sm) % 1440
+    // Late window spans midnight: boundary → 6am.
+    const isLate = lateBoundaryMin > 360 ? (startMin >= lateBoundaryMin || startMin < 360) : (startMin >= lateBoundaryMin && startMin < 360)
+    if (!isLate) continue
+    const planned = (weekBlocks ?? []).some((b) => {
+      const bs = new Date(b.start_time as string).getTime()
+      const be = new Date(b.end_time as string).getTime()
+      return startMs >= bs && startMs < be
+    })
+    if (!planned) lateDiversionCount++
+  }
+  const sleepCost = sleepEv.debtH !== null && sleepEv.debtH > 3
+  const gymCost = workoutEv.daysSinceAny !== null && workoutEv.daysSinceAny >= 3
+  // Diagnostic-only line, every run, regardless of whether it crosses the
+  // trigger threshold below — Amarsh asked to see this so the count(3) /
+  // cost-signal thresholds can be tuned against real data instead of guessed.
+  diagnostics.push(`late-diversion: count7d=${lateDiversionCount}, sleepCost=${sleepCost}, gymCost=${gymCost}`)
+  if (lateDiversionCount >= 3 && (sleepCost || gymCost)) {
+    const costParts: string[] = []
+    if (sleepCost) costParts.push(`you're already ~${sleepEv.debtH!.toFixed(1)}h short on sleep`)
+    if (gymCost) costParts.push(`it's been ${workoutEv.daysSinceAny} days since the gym`)
+    out.push({
+      key: 'late-diversion',
+      kind: 'late-diversion',
+      title: 'Late unplanned nights adding up',
+      detail: `${lateDiversionCount} late, unplanned things this week, and ${costParts.join(' and ')} — worth a look at what's driving the late starts?`,
+      evidence: `count7d=${lateDiversionCount}, sleepDebtH=${sleepEv.debtH?.toFixed(1) ?? 'n/a'}, gymGapDays=${workoutEv.daysSinceAny ?? 'n/a'}`,
+      importance: 2,
+    })
+  }
+
+  return { concerns: out, diagnostics }
 }
 
 // ─── Push delivery (Expo push service) ───────────────────────────────────────
@@ -307,8 +372,9 @@ async function runForUser(db: SupabaseClient, userId: string, trigger: string): 
   const hour = localHour(prefs.timezone)
   const lines: string[] = []
 
-  const detected = await detectConcerns(db, userId, prefs)
+  const { concerns: detected, diagnostics } = await detectConcerns(db, userId, prefs)
   const detectedKeys = new Set(detected.map((d) => d.key))
+  lines.push(...diagnostics)
 
   // Follow-up: resolve open concerns whose condition cleared.
   const { data: openConcerns } = await db

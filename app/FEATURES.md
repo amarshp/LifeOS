@@ -42,6 +42,8 @@
 - Triggers: pg_cron every 30 min (Vault-stored cron key, `setup_brain_cron` RPC) + throttled app-open tick; pushes via Expo to registered device tokens under a 5/day attention budget, per-kind cooldowns, quiet hours
 - /brain "Watching" screen (eye icon in Agent): open concerns with evidence + last action, dismiss, recently closed, and the run log of every act-or-stay-silent decision
 - Push transport: `push_tokens` registration on device (token lands after the next push-capable IPA build)
+- `late-diversion` concern: pattern-gated (≥3 unplanned late-night entries in a rolling 7 days AND sleep-debt or gym-gap already elevated), not per-instance — one-off plan deviation stays a conversational topic in Agent's evening review, never a push; every run logs the raw count/cost-signal to `brain_runs` regardless of trigger, for tuning
+- Agent's system prompt now carries a tier-1 general-research-evidence block (sleep/exercise findings, `research/*.md`), kept explicitly separate in framing from the tier-2 evidence snapshot (his own tracked data)
 
 ## Time Tracking
 
