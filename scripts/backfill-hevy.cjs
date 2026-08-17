@@ -132,9 +132,12 @@ async function main() {
   console.log(`Parsed ${sessions.size} unique sessions from CSV.`)
   console.log(`${toInsert.length - untaggedCount} tagged, ${untaggedCount} untagged (generic/ambiguous title).`)
 
-  // Dedupe against anything already in time_entries for this user (safe to re-run).
+  // Dedupe against Gym entries already in time_entries (safe to re-run). Scoped
+  // to title=Gym specifically — matching on start_time alone would wrongly skip
+  // a real Hevy session if some unrelated entry (e.g. Sleep) happened to start
+  // at the exact same instant.
   const existingResp = await fetch(
-    `${SUPABASE_URL}time_entries?user_id=eq.${USER_ID}&select=start_time&order=start_time.asc&limit=5000`,
+    `${SUPABASE_URL}time_entries?user_id=eq.${USER_ID}&title=eq.Gym&select=start_time&order=start_time.asc&limit=5000`,
     { headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` } },
   )
   const existing = await existingResp.json()

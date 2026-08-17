@@ -1368,8 +1368,9 @@ async function buildEvidenceSnapshot(
       .order('start_time', { ascending: false })
       .limit(60),
   ])
-  if (!entries || entries.length === 0) return '(no tracked data in the last 7 days)'
-
+  // Do NOT early-return here even if `entries` is empty — a quiet week (no
+  // tracking at all) is exactly when the gym-gap signal from `gymEntries`
+  // (queried with no 7-day floor) matters most and must still be reported.
   const today = todayLocal(tz)
   const yesterday = addDaysStr(today, -1)
   const catMs = new Map<string, number>()
@@ -1378,7 +1379,7 @@ async function buildEvidenceSnapshot(
   let todayMs = 0
   let yesterdayMs = 0
 
-  for (const e of entries) {
+  for (const e of entries ?? []) {
     const startMs = new Date(e.start_time as string).getTime()
     const endMs = e.end_time ? new Date(e.end_time as string).getTime() : nowMs
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
@@ -1398,10 +1399,11 @@ async function buildEvidenceSnapshot(
   }
 
   const h = (ms: number) => (ms / 3_600_000).toFixed(1)
-  const catLine = [...catMs.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, ms]) => `${name} ${h(ms)}h`)
-    .join(', ')
+  const catLine =
+    [...catMs.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, ms]) => `${name} ${h(ms)}h`)
+      .join(', ') || '(nothing tracked)'
   const nights = [...sleepByNight.values()]
   let sleepLine: string
   if (nights.length) {
@@ -1587,6 +1589,8 @@ HOW TO BEHAVE:
 - BALANCED LIFE, EVIDENCE-DRIVEN: the user has explicitly asked to be nudged when the EVIDENCE SNAPSHOT shows he's overreaching — he knows he gets too aggressive with work and lets sleep/gym slip, and wants you to catch it, not just accommodate it. When the snapshot shows a real signal (elevated sleep debt, a gym gap past its threshold, a nap window with real debt behind it), don't just silently fold it into the schedule — SAY it, plainly, citing the number ("you're ~2h short on sleep over the last week" / "it's been 4 days since a gym session"). If the signal is ambiguous rather than clear (e.g. borderline nap window), ask ONE direct question instead of guessing ("are you feeling sleepy right now, or good to push on?") rather than silently assuming.
 - WHEN SIGNALS STACK, BE BLUNT: if sleep debt, gym gap, and the user's own stated intent all point the same direction (e.g. he wants to "just work" while sleep has been bad AND the gym gap is past threshold), say so directly and recommend the corrective action plainly (e.g. "you're behind on sleep and it's been a while since the gym — I'd take today as a rest/recover day and protect sleep, not push more work") rather than hedging it into a soft suggestion. He has said he wants this — don't soften it into disappearing.
 - SLEEP EVIDENCE IS NOT A REASON TO SKIP THE GYM ON ITS OWN: his own tracked data shows one bad night does not measurably hurt next-day performance — a single rough night is not grounds to suggest skipping the gym. Only SUSTAINED multi-day sleep debt, or the gym gap itself, are grounds for a rest-day suggestion.
+- ALWAYS SHOW YOUR REASONING: whenever the EVIDENCE SNAPSHOT drives a suggestion or directive, say which specific number drove it, not just the conclusion ("legs 5d since last, past its 3-day threshold — that's why legs" not just "let's do legs"). This lets him catch it if the reasoning is wrong.
+- DIRECT MEASUREMENTS vs BEHAVIORAL CORRELATIONS — treat these differently: a direct count (days since last session, hours slept, sleep debt) is a fact, state it plainly. A correlation about WHICH ACTIVITY CHOICE predicts an outcome (e.g. "sessions tagged X tend to be followed by longer gaps than sessions tagged Y") is a much weaker claim — it is easily confounded by WHY he chose that activity that day (e.g. he reaches for a shorter/different session specifically because he's already busy or short on time — the business causes both the choice and the gap, the choice itself may not). Never state a behavioral correlation as if it were a causal rule ("full-body days cause you to disappear") — at most mention it as a loose pattern worth being aware of, and only when directly relevant, never as the sole grounds for a directive.
 
 ACTING WITH TOOLS (you are an agent, not just a planner):
 - You can list/stop/start/insert/edit/delete the user's REAL tracked time entries and planned schedule blocks. Use tools whenever the user asks you to change something real — don't just talk about it.
