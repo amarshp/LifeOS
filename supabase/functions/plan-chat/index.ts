@@ -1446,7 +1446,12 @@ async function buildEvidenceSnapshot(
       : typeLines.length
         ? ' No type is past its recovery threshold yet.'
         : ''
-    gymLine = `Days since any gym session: ${daysSinceAny}${daysSinceAny >= 3 ? ' (past the 3-day point where comeback odds drop sharply)' : ''}. By type: ${typeLines.length ? typeLines.map((t) => `${t.type} ${t.days}d`).join(', ') : '(no tagged sessions yet)'}.${recLine}`
+    // No editorial annotation on daysSinceAny (e.g. a specific "comeback odds"
+    // curve) — an independent re-derivation from the raw Hevy export did not
+    // reproduce the cited curve (not even its shape), so that precision isn't
+    // trustworthy enough to assert as fact here. Report the plain count and
+    // let the model's own reasoning (with its hedging rules) do the framing.
+    gymLine = `Days since any gym session: ${daysSinceAny}. By type: ${typeLines.length ? typeLines.map((t) => `${t.type} ${t.days}d`).join(', ') : '(no tagged sessions yet)'}.${recLine}`
   }
 
   // Nap window: only surfaced as a POSSIBILITY when in-window and debt is real
