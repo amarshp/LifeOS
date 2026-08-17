@@ -2,6 +2,27 @@ import { supabase } from '../lib/supabase'
 import type { TimeEntry, TimeEntryInsert, TimeEntryUpdate } from '../types/database'
 import { paddedDateRange, filterByLocalDay, shiftDate } from '../lib/day-range'
 import { completeTodoById } from './todos'
+import { emitTimerChange } from '../lib/timer-events'
+
+// Title/category cleanup for a freshly-created manual entry: calls the
+// enrich-capture classifier directly (instead of waiting for the DB
+// trigger's webhook to get around to it) and, if it lands a patch, tells the
+// UI to refetch so the corrected title/category shows up without the user
+// doing anything. Deliberately fire-and-forget, NOT awaited by callers —
+// measured live 2026-08-17, gpt-4.1-mini classification round-trips at
+// ~2.7-4.0s (avg 3.36s across 3 calls), so awaiting it would freeze the
+// start/log-entry action for several seconds. Never throws — a failed/slow
+// enrich just means the raw title stands until the async DB-trigger fallback
+// (still unchanged) catches it moments later.
+function quickEnrichInBackground(table: 'time_entries' | 'todos', id: string): void {
+  supabase.functions
+    .invoke('enrich-capture', { body: { table, id } })
+    .then(({ data, error }) => {
+      const applied = error ? null : (data as { applied?: Record<string, unknown> } | null)?.applied
+      if (applied) emitTimerChange()
+    })
+    .catch(() => {})
+}
 
 // Auto-complete rule: a time entry linked to a task (todo_id) that gets STOPPED
 // or logged as completed marks that task done. Lives here so every stop path
@@ -75,6 +96,7 @@ export async function startTimer(entry: TimeEntryInsert): Promise<TimeEntry> {
     .single<TimeEntry>()
 
   if (error) throw error
+  quickEnrichInBackground('time_entries', data.id)
   return data
 }
 
@@ -151,6 +173,7 @@ export async function startTimerStopPrevious(params: {
       ...(params.calendarBlockId ? { calendar_block_id: params.calendarBlockId } : {}),
     })
   }
+  quickEnrichInBackground('time_entries', entryId)
   return entryId
 }
 
@@ -327,6 +350,7 @@ export async function addCompletedEntry(entry: {
 
   if (error) throw error
   await completeLinkedTodo(data.todo_id)
+  quickEnrichInBackground('time_entries', data.id)
   return data
 }
 

@@ -42,8 +42,28 @@ const RESPONSE_SCHEMA = {
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
-  const key = Deno.env.get('ENRICH_KEY')
-  if (!key || req.headers.get('x-enrich-key') !== key) return json({ error: 'unauthorized' }, 401)
+
+  const url = Deno.env.get('SUPABASE_URL')
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  const openaiKey = Deno.env.get('OPENAI_API_KEY')
+  const enrichKey = Deno.env.get('ENRICH_KEY')
+  if (!url || !serviceKey || !openaiKey) return json({ error: 'server misconfigured' }, 500)
+  const admin = createClient(url, serviceKey, { auth: { persistSession: false } })
+
+  // Two trusted callers: the DB trigger (shared secret — fully trusted, any
+  // row) or a signed-in user calling directly right after their own manual
+  // capture for instant feedback (verified against the row's owner below).
+  const authHeader = req.headers.get('Authorization')
+  let callerUserId: string | null = null
+  if (enrichKey && req.headers.get('x-enrich-key') === enrichKey) {
+    // trigger path — no owner check needed
+  } else if (authHeader?.startsWith('Bearer ')) {
+    const { data: userData, error: userErr } = await admin.auth.getUser(authHeader.slice(7))
+    if (userErr || !userData.user) return json({ error: 'unauthorized' }, 401)
+    callerUserId = userData.user.id
+  } else {
+    return json({ error: 'unauthorized' }, 401)
+  }
 
   let body: Body
   try {
@@ -54,16 +74,11 @@ Deno.serve(async (req) => {
   const { table, id, title: rawTitle } = body
   if (!table || !id || !['time_entries', 'todos'].includes(table)) return json({ error: 'missing table/id' }, 400)
 
-  const url = Deno.env.get('SUPABASE_URL')
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  const openaiKey = Deno.env.get('OPENAI_API_KEY')
-  if (!url || !serviceKey || !openaiKey) return json({ error: 'server misconfigured' }, 500)
-  const admin = createClient(url, serviceKey, { auth: { persistSession: false } })
-
   // Load the row (may have been edited/deleted since the webhook fired).
   const cols = table === 'todos' ? 'id, user_id, title, category_id, kind' : 'id, user_id, title, category_id, tags'
   const { data: row } = await admin.from(table).select(cols).eq('id', id).is('deleted_at', null).maybeSingle()
   if (!row) return json({ ok: true, note: 'row gone' })
+  if (callerUserId && row.user_id !== callerUserId) return json({ error: 'not your entry' }, 403)
   if (rawTitle && row.title !== rawTitle) return json({ ok: true, note: 'title changed since capture — leaving it alone' })
 
   const [{ data: categories }, { data: tagRows }, { data: recent }, { data: settings }] = await Promise.all([
