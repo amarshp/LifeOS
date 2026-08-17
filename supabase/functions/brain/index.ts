@@ -289,19 +289,29 @@ async function detectConcerns(
     db.from('time_entries')
       .select('title, category_id, start_time')
       .eq('user_id', userId).is('deleted_at', null).gte('start_time', sevenDayAgoIso),
+    // Filtered on end_time, not start_time: an overnight block (e.g. a
+    // planned late movie or sleep block) that started just BEFORE the 7-day
+    // cutoff but still covers time inside the window must not be dropped —
+    // dropping it would wrongly count a genuinely-planned late entry as
+    // unplanned (Codex review caught this).
     db.from('calendar_blocks')
       .select('start_time, end_time')
-      .eq('user_id', userId).is('deleted_at', null).gte('start_time', sevenDayAgoIso),
+      .eq('user_id', userId).is('deleted_at', null).gte('end_time', sevenDayAgoIso),
   ])
   // Wind-down boundary: personal recBedClock minus a ~60min buffer (the
   // CONSENSUS wind-down window, research/sleep-hygiene-evidence.md §2), or a
   // fixed fallback until enough personal sleep data exists to compute one.
   const [bedH, bedM] = (sleepEv.recBedClock ?? '23:00').split(':').map(Number)
   const lateBoundaryMin = (((bedH * 60 + bedM - 60) % 1440) + 1440) % 1440
-  let lateDiversionCount = 0
+  // Count distinct NIGHTS, not entries: switching between three unplanned
+  // things in one late night is one bad night, not three data points toward
+  // a "weekly pattern" (Codex review caught this — the wording said "nights
+  // adding up" but the original code counted raw entries).
+  const lateNights = new Set<string>()
   for (const e of weekEntries ?? []) {
     const name = (catName(e.category_id as string | null) ?? '').toLowerCase()
-    if (name.includes('sleep') || (e.title as string).toLowerCase().includes('sleep')) continue
+    const title = ((e.title as string | null) ?? '').toLowerCase()
+    if (name.includes('sleep') || title.includes('sleep')) continue
     const startMs = new Date(e.start_time as string).getTime()
     const localStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(startMs))
     const [sh, sm] = localStr.split(':').map(Number)
@@ -314,8 +324,14 @@ async function detectConcerns(
       const be = new Date(b.end_time as string).getTime()
       return startMs >= bs && startMs < be
     })
-    if (!planned) lateDiversionCount++
+    if (planned) continue
+    // Bucket the early-morning branch (startMin < 360) under the PREVIOUS
+    // calendar day — 1am Tuesday is "Monday night", not a new night.
+    const localDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz, dateStyle: 'short' }).format(new Date(startMs))
+    const nightKey = startMin < 360 ? addDaysStr(localDateStr, -1) : localDateStr
+    lateNights.add(nightKey)
   }
+  const lateDiversionCount = lateNights.size
   const sleepCost = sleepEv.debtH !== null && sleepEv.debtH > 3
   const gymCost = workoutEv.daysSinceAny !== null && workoutEv.daysSinceAny >= 3
   // Diagnostic-only line, every run, regardless of whether it crosses the
@@ -330,7 +346,7 @@ async function detectConcerns(
       key: 'late-diversion',
       kind: 'late-diversion',
       title: 'Late unplanned nights adding up',
-      detail: `${lateDiversionCount} late, unplanned things this week, and ${costParts.join(' and ')} — worth a look at what's driving the late starts?`,
+      detail: `${lateDiversionCount} late, unplanned nights this week, and ${costParts.join(' and ')} — worth a look at what's driving the late starts?`,
       evidence: `count7d=${lateDiversionCount}, sleepDebtH=${sleepEv.debtH?.toFixed(1) ?? 'n/a'}, gymGapDays=${workoutEv.daysSinceAny ?? 'n/a'}`,
       importance: 2,
     })
