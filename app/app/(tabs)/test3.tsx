@@ -1,12 +1,16 @@
 import { View, Text, ScrollView, Pressable, StyleSheet, Animated } from 'react-native'
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
+import { useFocusEffect } from 'expo-router'
 import Svg, { Path, Circle } from 'react-native-svg'
 import { fonts } from '../../src/theme/tokens'
 import { useHomeData } from '../../src/hooks/useHomeData'
 import { formatElapsed } from '../../src/hooks/useTimer'
 import { relativeTime, formatHours } from '../../src/lib/format'
 import { toLocalDateStr } from '../../src/lib/date'
+import { getDaysSinceLastSleep, getRecentNudgeOutcomes } from '../../src/services/lifeSignals'
 import type { TimeEntry, Category } from '../../src/types/database'
+
+const PULSE_SLEEP_QUIET_DAYS = 3
 
 const GAP_CARD_MIN_MS = 30 * 60_000 // untracked stretch worth asking about
 const DRIFT_CARD_MIN_MS = 45 * 60_000 // plan this far behind → offer replan
@@ -68,6 +72,15 @@ export default function Test3Screen() {
       params: { date: toLocalDateStr(new Date()), editEntry: entryId, focusTs: String(Date.now()) },
     })
 
+  // Pulse peek — a permanent, quiet way in (not gated on having something to
+  // say); the dot only marks that something's fresh since it last changed.
+  const [pulseHasFresh, setPulseHasFresh] = useState(false)
+  useFocusEffect(useCallback(() => {
+    Promise.all([getDaysSinceLastSleep(), getRecentNudgeOutcomes(3)])
+      .then(([quiet, outs]) => setPulseHasFresh((quiet !== null && quiet >= PULSE_SLEEP_QUIET_DAYS) || outs.length > 0))
+      .catch(() => {})
+  }, []))
+
   const pulseAnim = useRef(new Animated.Value(1)).current
   useEffect(() => {
     if (!currentEntry) { pulseAnim.setValue(1); return }
@@ -102,6 +115,18 @@ export default function Test3Screen() {
           />
           <Path d="M6.6 13.2a1.5 1.5 0 0 0 2.8 0" stroke={tc.text4} strokeWidth={1.3} strokeLinecap="round" />
         </Svg>
+      </Pressable>
+
+      {/* Pulse — quiet, permanent way in to the calm signals page */}
+      <Pressable
+        onPress={() => router.push('/pulse')}
+        style={styles.pulse}
+        hitSlop={12}
+      >
+        <Svg width={18} height={18} viewBox="0 0 16 16" fill="none">
+          <Path d="M1.5 8.5h3l1.5-4 2.5 7 1.5-3h4" stroke={tc.text4} strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+        {pulseHasFresh && <View style={[styles.pulseDot, { backgroundColor: tc.text1, borderColor: tc.bg }]} />}
       </Pressable>
 
       {/* Settings — off the tab bar, behind a quiet gear */}
@@ -350,6 +375,8 @@ const styles = StyleSheet.create({
   nextText: { fontSize: 13.5, letterSpacing: 0.3, fontFamily: fonts.ui },
 
   gear: { position: 'absolute', top: 16, right: 20, zIndex: 10, padding: 4 },
+  pulse: { position: 'absolute', top: 16, right: 56, zIndex: 10, padding: 4 },
+  pulseDot: { position: 'absolute', top: 3, right: 3, width: 7, height: 7, borderRadius: 3.5, borderWidth: 1.5 },
   bell: { position: 'absolute', top: 16, left: 20, zIndex: 10, padding: 4 },
   stateCard: {
     alignSelf: 'stretch',

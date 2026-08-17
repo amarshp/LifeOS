@@ -61,6 +61,11 @@ interface DetectedConcern {
   detail: string
   evidence: string
   importance: number
+  // The single number this concern is "about", captured at open time so a
+  // later resolution can say something concrete (Phase 4, §13a.1) — not
+  // every kind has one clean number (gap/drift/commitment/morning/evening
+  // don't), so this stays optional rather than forcing a fake value.
+  metricValue?: number
 }
 
 const COOLDOWN_MIN: Record<DetectedConcern['kind'], number> = {
@@ -86,6 +91,21 @@ function inQuietHours(hour: number, p: Prefs): boolean {
   const { quiet_hours_start: qs, quiet_hours_end: qe } = p
   if (qs === null || qe === null || qs === qe) return false
   return qs < qe ? hour >= qs && hour < qe : hour >= qs || hour < qe
+}
+
+// Human-readable form of a concern's metric_at_open, for the resolution
+// verdict (Phase 4, §13a.1) — one line per kind that actually carries a
+// metricValue; anything else (or a null, e.g. a pre-Phase-4 concern with no
+// stored value) renders nothing rather than a wrong guess.
+function metricPhrase(kind: DetectedConcern['kind'], value: number | null): string {
+  if (value === null) return ''
+  switch (kind) {
+    case 'gym-gap': return `${value}d since gym`
+    case 'sleep-debt': return `~${value.toFixed(1)}h sleep debt`
+    case 'post-activity-nap': return `~${value.toFixed(1)}h sleep debt`
+    case 'late-diversion': return `${value} late night${value === 1 ? '' : 's'}`
+    default: return ''
+  }
 }
 
 async function detectConcerns(
@@ -235,6 +255,7 @@ async function detectConcerns(
       detail: `${workoutEv.daysSinceAny} days since your last gym session${overdue ? ` — ${overdue.type} is the most overdue` : ''}. Worth getting back today.`,
       evidence: `daysSinceAny=${workoutEv.daysSinceAny}`,
       importance: workoutEv.daysSinceAny >= 7 ? 3 : 2,
+      metricValue: workoutEv.daysSinceAny,
     })
   }
 
@@ -248,6 +269,7 @@ async function detectConcerns(
       detail: `Running ~${sleepEv.debtH.toFixed(1)}h short of target over the last week. Worth an earlier night — aim for lights out around ${sleepEv.recBedClock}.`,
       evidence: `debtH=${sleepEv.debtH.toFixed(1)}, avgH=${sleepEv.avgH?.toFixed(1)}, targetH=${sleepEv.targetH?.toFixed(1)}`,
       importance: sleepEv.debtH > 6 ? 3 : 2,
+      metricValue: sleepEv.debtH,
     })
   }
 
@@ -269,6 +291,7 @@ async function detectConcerns(
         detail: `You just finished "${lastCompleted.title}" and sleep debt is running ~${sleepEv.debtH.toFixed(1)}h — a short nap (~20min) or a full cycle (~90min) could help before you go on. Your call.`,
         evidence: `justEnded="${lastCompleted.title}" (${justEndedName}) ${endedMinAgo}min ago, debtH=${sleepEv.debtH.toFixed(1)}, napWindow=true`,
         importance: 1,
+        metricValue: sleepEv.debtH,
       })
     }
   }
@@ -349,6 +372,7 @@ async function detectConcerns(
       detail: `${lateDiversionCount} late, unplanned nights this week, and ${costParts.join(' and ')} — worth a look at what's driving the late starts?`,
       evidence: `count7d=${lateDiversionCount}, sleepDebtH=${sleepEv.debtH?.toFixed(1) ?? 'n/a'}, gymGapDays=${workoutEv.daysSinceAny ?? 'n/a'}`,
       importance: 2,
+      metricValue: lateDiversionCount,
     })
   }
 
@@ -392,16 +416,24 @@ async function runForUser(db: SupabaseClient, userId: string, trigger: string): 
   const detectedKeys = new Set(detected.map((d) => d.key))
   lines.push(...diagnostics)
 
-  // Follow-up: resolve open concerns whose condition cleared.
+  // Follow-up: resolve open concerns whose condition cleared. Phase 4
+  // (§13a.1): write a real verdict instead of the old generic "condition
+  // cleared" — this IS the "did it work" log, no separate table needed.
   const { data: openConcerns } = await db
     .from('concerns')
-    .select('id, key, kind, cooldown_until, notified_count')
+    .select('id, key, kind, cooldown_until, notified_count, created_at, metric_at_open')
     .eq('user_id', userId)
     .eq('status', 'open')
   for (const c of openConcerns ?? []) {
     if (!detectedKeys.has(c.key)) {
-      await db.from('concerns').update({ status: 'resolved', resolution: 'condition cleared' }).eq('id', c.id)
-      lines.push(`resolved ${c.key} (condition cleared)`)
+      const daysOpen = Math.max(0, Math.round((Date.now() - new Date(c.created_at as string).getTime()) / 86_400_000))
+      const wasNotified = ((c.notified_count as number) ?? 0) > 0
+      const openPhrase = metricPhrase(c.kind as DetectedConcern['kind'], c.metric_at_open as number | null)
+      const resolution = wasNotified
+        ? `resolved ${daysOpen}d after flagging${openPhrase ? ` (was ${openPhrase})` : ''}`
+        : `cleared on its own${openPhrase ? ` (was ${openPhrase})` : ''} — never actually notified`
+      await db.from('concerns').update({ status: 'resolved', resolution }).eq('id', c.id)
+      lines.push(`resolved ${c.key}: ${resolution}`)
     }
   }
   const openByKey = new Map((openConcerns ?? []).map((c) => [c.key, c]))
@@ -427,7 +459,7 @@ async function runForUser(db: SupabaseClient, userId: string, trigger: string): 
     } else {
       const { data: created, error } = await db
         .from('concerns')
-        .insert({ user_id: userId, key: d.key, kind: d.kind, title: d.title, detail: d.detail, evidence: d.evidence, importance: d.importance })
+        .insert({ user_id: userId, key: d.key, kind: d.kind, title: d.title, detail: d.detail, evidence: d.evidence, importance: d.importance, metric_at_open: d.metricValue ?? null })
         .select('id')
         .single()
       if (error) { lines.push(`ERROR creating ${d.key}: ${error.message}`); continue }

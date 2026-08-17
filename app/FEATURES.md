@@ -44,6 +44,13 @@
 - Push transport: `push_tokens` registration on device (token lands after the next push-capable IPA build)
 - `late-diversion` concern: pattern-gated (≥3 unplanned late-night entries in a rolling 7 days AND sleep-debt or gym-gap already elevated), not per-instance — one-off plan deviation stays a conversational topic in Agent's evening review, never a push; every run logs the raw count/cost-signal to `brain_runs` regardless of trigger, for tuning
 - Agent's system prompt now carries a tier-1 general-research-evidence block (sleep/exercise findings, `research/*.md`), kept explicitly separate in framing from the tier-2 evidence snapshot (his own tracked data)
+- Outcome tracking: `concerns.metric_at_open` captures the triggering number when a concern opens; on resolve it's compared against what cleared it, producing a real verdict string ("resolved 2d after flagging (was 4d since gym)" vs "cleared on its own — never actually notified") instead of a generic "condition cleared" — feeds the Pulse page's "did it work" cards
+
+### Pulse (calm signals page)
+- `/pulse`: a deliberately sparse counterpart to Insights (which answers "did I track accurately"; Pulse answers "is anything actually worth knowing"). Renders only real signal — no section shows a placeholder for data that isn't there
+- Sections, each independently gated: gym-frequency 8-week sparkline; a "sleep logging gone quiet" callout (days since last Sleep entry, ≥3); a confidence-gated sleep→next-day-gym correlation (Pearson, lagged one day, needs ≥14 paired nights, shown with a star rating and "not a cause, just a pattern" framing); "did it work" — recent resolved concerns that were actually pushed at least once
+- Sleep-debt trend/correlation held back for now — logging is too sparse (1/7 nights at the time this shipped) to say anything real
+- Entry point: a small pulse-line icon on the Now tab (next to bell/gear), always present (not hidden behind a condition), with a quiet dot badge when something's fresh (sleep gone quiet, or a nudge resolved in the last 3 days)
 
 ## Time Tracking
 
