@@ -98,7 +98,12 @@ function buildAggregates(rows: Row[], referenceDate: string) {
 
   const attendance: Record<string, unknown> = {}
   for (const c of cats) {
-    const activeDates = [...new Set(rows.filter((r) => r.category === c && r.start < referenceDate).map((r) => dateOf(r.start)))].sort()
+    // No referenceDate upper bound here (unlike trend's active-day windows) --
+    // attendance only cares whether a day HAS an entry, not how much time was
+    // logged, so a same-day re-engagement must count. Excluding it (as trend
+    // does to avoid a partial day skewing a median) made a category that came
+    // back online today still read as "gone quiet" (Codex catch).
+    const activeDates = [...new Set(rows.filter((r) => r.category === c).map((r) => dateOf(r.start)))].sort()
     if (activeDates.length < MIN_SESSIONS_FOR_GAP_ESTIMATE) {
       attendance[c] = { enoughHistory: false }
       continue

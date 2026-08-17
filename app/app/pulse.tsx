@@ -30,20 +30,30 @@ export default function PulseScreen() {
   const [correlation, setCorrelation] = useState<CorrelationResult | null>(null)
   const [insightCards, setInsightCards] = useState<InsightCard[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [insightsLoaded, setInsightsLoaded] = useState(false)
 
   const load = useCallback(() => {
+    // Insights fetch on its own, not in the Promise.all below — it can take
+    // up to 45s (one LLM call server-side); bundling it meant the fast,
+    // always-instant cards (gym/sleep/correlation) went blank right along
+    // with it (Codex catch). They now render the moment they're ready,
+    // independent of how long the LLM call takes.
+    setInsightsLoaded(false)
+    getPulseInsights().then((cards) => {
+      setInsightCards(cards)
+      setInsightsLoaded(true)
+    }).catch(() => setInsightsLoaded(true))
+
     Promise.all([
       getGymFrequencyTrend(56),
       getDaysSinceLastSleep(),
       getRecentNudgeOutcomes(30),
       getSleepGymCorrelation(90),
-      getPulseInsights(),
-    ]).then(([weeks, quiet, outs, corr, cards]) => {
+    ]).then(([weeks, quiet, outs, corr]) => {
       setGymWeeks(weeks)
       setSleepQuietDays(quiet)
       setOutcomes(outs)
       setCorrelation(corr)
-      setInsightCards(cards)
       setLoaded(true)
     }).catch(() => setLoaded(true))
   }, [])
@@ -56,7 +66,10 @@ export default function PulseScreen() {
   const showGymTrend = gymWeeks.some(w => w.count > 0)
   const showOutcomes = outcomes.length > 0
   const showCorrelation = correlation !== null
-  const nothingToShow = loaded && !showSleepQuiet && !showGymTrend && !showOutcomes && !showCorrelation && insightCards.length === 0
+  // Waits on both fast + insight loads before declaring "nothing" (so a slow
+  // insights call doesn't get preempted by a premature empty state) — but
+  // that wait never blocks the fast cards themselves from rendering above.
+  const nothingToShow = loaded && insightsLoaded && !showSleepQuiet && !showGymTrend && !showOutcomes && !showCorrelation && insightCards.length === 0
   const maxCount = Math.max(1, ...gymWeeks.map(w => w.count))
 
   return (
