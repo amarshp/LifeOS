@@ -835,28 +835,10 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       }
       if (Object.keys(updates).length === 0) return { error: 'nothing to update' }
 
-      // Moving the start away from an entry that was touching it right before
-      // would silently leave a gap (moved later) or an overlap (moved earlier)
-      // on the previous entry. Auto-extend/trim that neighbor to the new
-      // boundary — skipped if it would collapse it to zero/negative duration.
+      let oldStart: string | undefined
       if (typeof updates.start_time === 'string') {
         const { data: oldRow } = await supabase.from('time_entries').select('start_time').eq('id', id).single()
-        const oldStart = oldRow?.start_time as string | undefined
-        if (oldStart && oldStart !== updates.start_time) {
-          const { data: prev } = await supabase
-            .from('time_entries')
-            .select('id, title, start_time')
-            .eq('user_id', ctx.userId)
-            .eq('end_time', oldStart)
-            .is('deleted_at', null)
-            .neq('id', id)
-            .limit(1)
-            .maybeSingle()
-          if (prev && (prev.start_time as string) < (updates.start_time as string)) {
-            await supabase.from('time_entries').update({ end_time: updates.start_time }).eq('id', prev.id)
-            ctx.actions.push(`Extended "${prev.title}" to ${isoToLocal(updates.start_time as string, tz)} to stay contiguous`)
-          }
-        }
+        oldStart = oldRow?.start_time as string | undefined
       }
 
       const { data, error } = await supabase
@@ -867,6 +849,24 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .single()
       if (error) return { error: error.message }
       ctx.actions.push(`Updated entry "${data.title}"`)
+
+      // Only touch the neighbor once this edit is confirmed committed —
+      // extending it first risked leaving that mutation stranded if this update failed.
+      if (oldStart && typeof updates.start_time === 'string' && oldStart !== updates.start_time) {
+        const { data: prev } = await supabase
+          .from('time_entries')
+          .select('id, title, start_time')
+          .eq('user_id', ctx.userId)
+          .eq('end_time', oldStart)
+          .is('deleted_at', null)
+          .neq('id', id)
+          .limit(1)
+          .maybeSingle()
+        if (prev && (prev.start_time as string) < (updates.start_time as string)) {
+          await supabase.from('time_entries').update({ end_time: updates.start_time }).eq('id', prev.id)
+          ctx.actions.push(`Extended "${prev.title}" to ${isoToLocal(updates.start_time as string, tz)} to stay contiguous`)
+        }
+      }
       return { ok: true }
     }
 

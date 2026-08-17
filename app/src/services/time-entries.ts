@@ -217,13 +217,12 @@ async function extendTouchingNeighbor(entryId: string, oldStart: string, newStar
 }
 
 export async function updateEntry(id: string, updates: TimeEntryUpdate): Promise<TimeEntry> {
+  let oldStart: string | undefined
   if (updates.start_time) {
     const { data: current } = await supabase.from('time_entries').select('start_time').eq('id', id).maybeSingle()
-    const oldStart = (current as { start_time: string } | null)?.start_time
-    if (oldStart && oldStart !== updates.start_time) {
-      await extendTouchingNeighbor(id, oldStart, updates.start_time as string)
-    }
+    oldStart = (current as { start_time: string } | null)?.start_time
   }
+
   const { data, error } = await supabase
     .from('time_entries')
     .update(updates as unknown as Record<string, unknown>)
@@ -232,6 +231,12 @@ export async function updateEntry(id: string, updates: TimeEntryUpdate): Promise
     .single<TimeEntry>()
 
   if (error) throw error
+
+  // Only touch the neighbor once the requested edit is confirmed committed —
+  // extending it first risked leaving that mutation stranded if this update failed.
+  if (oldStart && updates.start_time && oldStart !== updates.start_time) {
+    await extendTouchingNeighbor(id, oldStart, updates.start_time as string)
+  }
   return data
 }
 
