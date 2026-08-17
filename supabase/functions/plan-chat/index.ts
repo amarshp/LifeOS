@@ -512,6 +512,19 @@ const TOOLS = [
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description:
+        'Search the live web for something you cannot know from training data alone — current events, prices, weather, sports results, "what time does X open today", or anything time-sensitive. Returns a short grounded answer. Do not use it for anything answerable from general knowledge or from the user\'s own LifeOS data (use the other tools for that).',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'A focused search query, not the user\'s raw message.' } },
+        required: ['query'],
+      },
+    },
+  },
 ]
 
 interface ToolCtx {
@@ -581,7 +594,33 @@ async function completeTodoRecord(ctx: ToolCtx, todoId: string): Promise<Record<
   return { ok: true }
 }
 
-async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>): Promise<unknown> {
+const WEB_SEARCH_TIMEOUT_MS = 15_000
+
+// Isolated hand-off, not a main-loop swap: gpt-4o-search-preview rejects the
+// `tools` parameter entirely (confirmed against OpenAI's own docs/community
+// reports), so it can't replace gpt-5.1 mid-conversation without silently
+// dropping every other tool. Instead this is a completely separate
+// Chat Completions call — gpt-5.1 keeps all 20 other tools; only this one
+// sub-request goes to the search-capable model, and its answer comes back
+// as a normal tool result.
+async function webSearchViaGpt(query: string, openaiKey: string): Promise<string> {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
+    body: JSON.stringify({
+      model: 'gpt-4o-search-preview',
+      messages: [{ role: 'user', content: query }],
+    }),
+  })
+  if (!res.ok) throw new Error(`web search failed (${res.status})`)
+  const data = await res.json()
+  const answer = data.choices?.[0]?.message?.content
+  if (typeof answer !== 'string' || !answer.trim()) throw new Error('web search returned no answer')
+  return answer.trim()
+}
+
+async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>, openaiKey: string): Promise<unknown> {
   const { supabase, tz } = ctx
   const today = todayLocal(tz)
   const rawStr = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : undefined)
@@ -1254,6 +1293,17 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       return { ok: true }
     }
 
+    case 'web_search': {
+      const query = str('query')
+      if (!query) return { error: 'query required' }
+      try {
+        const answer = await webSearchViaGpt(query, openaiKey)
+        return { ok: true, answer }
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) }
+      }
+    }
+
     default:
       return { error: `unknown tool ${name}` }
   }
@@ -1461,6 +1511,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - NAMED EVENT, NO TIME GIVEN — TWO SEPARATE STEPS, IN ORDER: (1) ALWAYS call add_todo for it first — this step is unconditional, never skip it no matter what step 2 decides. (2) THEN decide whether to also ask for the time in the same reply: ask if it's really a scheduled commitment by nature (an interview, a meeting, an appointment, a movie) — it needs a real slot eventually. Don't ask for a casual personal item ("call Mom", "call the plumber", "read that book") or anything the user already called "sometime"/"eventually" — the backlog entry alone is enough there.
 - REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.
 - DEV NOTES: whenever the user complains about the APP ITSELF or wishes it worked differently ("this time is wrong", "it's slow", "I want a button that…"), call log_feedback with a crisp title — silently, then respond normally. These are for the developer, not the user's task list; never add_todo for app bugs.
+- WEB SEARCH: only call web_search for something genuinely time-sensitive or outside your training knowledge (today's weather, current prices, a live score, "is X open right now"). Don't reach for it to answer something you already know, and never use it for the user's own LifeOS data.
 - Building or reworking the WHOLE day's plan → call propose_plan (the user taps Apply), NOT add_calendar_block calls.
 - ONE ACTIVE PLAN: Apply REPLACES every non-fixed, non-recurring block for the day (future-only when replanning today) — there are never two parallel schedules. So your plan must be COMPLETE: re-include anything from ALREADY PLANNED that should survive (meals, sleep, tasks you agree with) — only [FIXED] appointments and recurring routines persist on their own.
 - CONFIRM OVERRIDES: if ALREADY PLANNED has meaningful content and the user asks for a NEW plan (not a tweak), confirm once before calling propose_plan: name what exists ("you already have gym at 6 and dinner at 8 planned") and ask whether to replace or work around it. Skip the confirmation only when the user already said to redo/replace/replan.
@@ -1540,6 +1591,8 @@ function stepLabel(name: string, args: Record<string, unknown>): string {
       return 'Drafting your schedule…'
     case 'clear_plan':
       return 'Clearing the plan…'
+    case 'web_search':
+      return 'Searching the web…'
     default:
       return 'Working…'
   }
@@ -1711,7 +1764,7 @@ async function runPlanTurn(
           /* leave empty */
         }
         onStep(stepLabel(call.name, args))
-        const result = await runTool(ctx, call.name, args)
+        const result = await runTool(ctx, call.name, args, openaiKey)
         convo.push({
           role: 'tool',
           tool_call_id: call.id,
