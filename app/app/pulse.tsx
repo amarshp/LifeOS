@@ -48,7 +48,9 @@ export default function PulseScreen() {
   useFocusEffect(useCallback(() => { load() }, [load]))
 
   const showSleepQuiet = sleepQuietDays !== null && sleepQuietDays >= SLEEP_QUIET_DAYS
-  const showGymTrend = gymWeeks.length > 0
+  // Zero-filled weeks (Codex catch) make a real gap visible — but an all-zero
+  // series isn't signal, it's "never logged," which isn't worth a card.
+  const showGymTrend = gymWeeks.some(w => w.count > 0)
   const showOutcomes = outcomes.length > 0
   const showCorrelation = correlation !== null
   const nothingToShow = loaded && !showSleepQuiet && !showGymTrend && !showOutcomes && !showCorrelation

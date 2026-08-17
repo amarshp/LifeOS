@@ -10,31 +10,44 @@ export interface WeekBucket {
   count: number
 }
 
-/** Gym sessions per week, oldest first — the trend card's data. */
+function mondayOf(d: Date): string {
+  const day = (d.getUTCDay() + 6) % 7 // 0 = Monday
+  const monday = new Date(d)
+  monday.setUTCDate(d.getUTCDate() - day)
+  return monday.toISOString().slice(0, 10)
+}
+
+/** Gym sessions per week, oldest first — the trend card's data. Includes
+ * zero-count weeks (a gap must render as a gap, not silently vanish from the
+ * series and read as continuous with whatever week comes next — Codex catch). */
 export async function getGymFrequencyTrend(days: number): Promise<WeekBucket[]> {
-  const since = new Date(Date.now() - days * 86_400_000).toISOString()
+  const now = new Date()
+  const since = new Date(now.getTime() - days * 86_400_000)
   const { data, error } = await supabase
     .from('time_entries')
     .select('start_time')
     .eq('title', 'Gym')
     .is('deleted_at', null)
-    .gte('start_time', since)
+    .gte('start_time', since.toISOString())
     .order('start_time', { ascending: true })
   if (error) throw error
 
   const buckets = new Map<string, number>()
   for (const row of data ?? []) {
-    const d = new Date(row.start_time as string)
-    // Monday of that week, as a stable bucket key.
-    const day = (d.getUTCDay() + 6) % 7 // 0 = Monday
-    const monday = new Date(d)
-    monday.setUTCDate(d.getUTCDate() - day)
-    const key = monday.toISOString().slice(0, 10)
+    const key = mondayOf(new Date(row.start_time as string))
     buckets.set(key, (buckets.get(key) ?? 0) + 1)
   }
-  return [...buckets.entries()]
-    .map(([weekStart, count]) => ({ weekStart, count }))
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+
+  // Walk every week from the oldest bucket to the current one, filling zeros.
+  const out: WeekBucket[] = []
+  const cursor = new Date(mondayOf(since) + 'T00:00:00Z')
+  const last = new Date(mondayOf(now) + 'T00:00:00Z')
+  while (cursor.getTime() <= last.getTime()) {
+    const key = cursor.toISOString().slice(0, 10)
+    out.push({ weekStart: key, count: buckets.get(key) ?? 0 })
+    cursor.setUTCDate(cursor.getUTCDate() + 7)
+  }
+  return out
 }
 
 // Matches brain/index.ts's category-name heuristic ("sleep" substring) so
