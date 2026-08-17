@@ -1081,7 +1081,7 @@ const styles = StyleSheet.create({
   retryChipText: { fontSize: 12, fontFamily: fonts.ui, fontWeight: '600' },
   streamRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  thinkingLabel: { fontSize: 14, fontFamily: fonts.ui },
+  thinkingLabel: { flexShrink: 1, fontSize: 14, fontFamily: fonts.ui },
   thinkingTime: { fontSize: 12, fontFamily: fonts.ui, fontVariant: ['tabular-nums'] },
   stopBtn: { width: 26, height: 26, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   stopSquare: { width: 9, height: 9, borderRadius: 2 },
