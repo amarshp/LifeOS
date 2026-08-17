@@ -1323,25 +1323,58 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
  * per category, sleep pattern, and today's coverage. Deterministic numbers —
  * the model interprets them, it never invents them.
  */
+// Canonical workout-type tags — must match the vocabulary enrich-capture writes
+// (see supabase/functions/enrich-capture/index.ts) and PLANNING_MODE_SPEC.md §5.
+// Recovery thresholds (days) come from PPL/exercise-science prior art in the
+// spec: legs/lower need more recovery than push/pull/upper/full-body/boxing.
+const WORKOUT_TYPES = ['push', 'pull', 'legs', 'upper', 'lower', 'full-body', 'boxing'] as const
+const RECOVERY_DAYS: Record<string, number> = { legs: 3, lower: 3 }
+const DEFAULT_RECOVERY_DAYS = 2
+
+function medianMinutes(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+function minutesToClock(mins: number): string {
+  const m = ((Math.round(mins) % 1440) + 1440) % 1440
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
 async function buildEvidenceSnapshot(
   supabase: SupabaseClient,
   tz: string,
   catName: (id: string | null) => string | null,
 ): Promise<string> {
-  const sinceIso = new Date(Date.now() - 7 * 86_400_000).toISOString()
-  const { data: entries } = await supabase
-    .from('time_entries')
-    .select('category_id, title, start_time, end_time, is_running')
-    .is('deleted_at', null)
-    .gte('start_time', sinceIso)
-    .order('start_time')
+  const nowMs = Date.now()
+  const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString()
+
+  const [{ data: entries }, { data: gymEntries }] = await Promise.all([
+    supabase
+      .from('time_entries')
+      .select('category_id, title, start_time, end_time, is_running')
+      .is('deleted_at', null)
+      .gte('start_time', sinceIso)
+      .order('start_time'),
+    // No time floor: a gap can run past any fixed window (e.g. months), and the
+    // exact gap length is the important signal, not just "long ago." Ordered
+    // + limited instead, which comfortably covers a full rotation history.
+    supabase
+      .from('time_entries')
+      .select('tags, start_time, end_time, is_running')
+      .is('deleted_at', null)
+      .eq('title', 'Gym')
+      .order('start_time', { ascending: false })
+      .limit(60),
+  ])
   if (!entries || entries.length === 0) return '(no tracked data in the last 7 days)'
 
-  const nowMs = Date.now()
   const today = todayLocal(tz)
   const yesterday = addDaysStr(today, -1)
   const catMs = new Map<string, number>()
   const sleepByNight = new Map<string, number>() // local wake date → ms
+  const sleepWakeMins: number[] = [] // minute-of-day the sleep entry ENDED, one per night
   let todayMs = 0
   let yesterdayMs = 0
 
@@ -1352,11 +1385,16 @@ async function buildEvidenceSnapshot(
     const durMs = Math.min(endMs, nowMs) - startMs
     const name = catName(e.category_id as string | null) ?? 'Other'
     catMs.set(name, (catMs.get(name) ?? 0) + durMs)
-    const endLocalDate = isoToLocal(new Date(Math.min(endMs, nowMs)).toISOString(), tz).slice(0, 10)
+    const endLocal = isoToLocal(new Date(Math.min(endMs, nowMs)).toISOString(), tz)
+    const endLocalDate = endLocal.slice(0, 10)
     if (endLocalDate === today) todayMs += durMs
     if (endLocalDate === yesterday) yesterdayMs += durMs
     const isSleep = name.toLowerCase().includes('sleep') || (e.title as string).toLowerCase().includes('sleep')
-    if (isSleep) sleepByNight.set(endLocalDate, (sleepByNight.get(endLocalDate) ?? 0) + durMs)
+    if (isSleep) {
+      sleepByNight.set(endLocalDate, (sleepByNight.get(endLocalDate) ?? 0) + durMs)
+      const [hh, mm] = endLocal.slice(11).split(':').map(Number)
+      sleepWakeMins.push(hh * 60 + mm)
+    }
   }
 
   const h = (ms: number) => (ms / 3_600_000).toFixed(1)
@@ -1365,14 +1403,67 @@ async function buildEvidenceSnapshot(
     .map(([name, ms]) => `${name} ${h(ms)}h`)
     .join(', ')
   const nights = [...sleepByNight.values()]
-  const sleepLine = nights.length
-    ? `sleep logged ${nights.length} night(s), avg ${h(nights.reduce((a, b) => a + b, 0) / nights.length)}h/night`
-    : 'no sleep entries logged'
+  let sleepLine: string
+  if (nights.length) {
+    const avgH = nights.reduce((a, b) => a + b, 0) / nights.length / 3_600_000
+    // Own rolling average, clamped to the NSF adult band — not a generic fixed number.
+    const targetH = Math.min(9, Math.max(7, avgH))
+    const debtH = nights.reduce((sum, ms) => sum + (targetH - ms / 3_600_000), 0)
+    const recWake = minutesToClock(medianMinutes(sleepWakeMins))
+    const recBed = minutesToClock(medianMinutes(sleepWakeMins) - targetH * 60)
+    const debtNote = debtH > 0.5 ? `, running ~${debtH.toFixed(1)}h short of target over these nights` : ''
+    sleepLine = `sleep logged ${nights.length} night(s), avg ${avgH.toFixed(1)}h/night, target ~${targetH.toFixed(1)}h (own rolling avg, clamped 7-9h)${debtNote}. Typical wake ~${recWake} → derived bedtime for target ~${recBed}.`
+  } else {
+    sleepLine = 'no sleep entries logged in the last 7 days'
+  }
+
+  // Workout rotation: last logged session per canonical type, and any-type gap
+  // (the sharper, adherence-critical signal — see PLANNING_MODE_SPEC.md §4).
+  let gymLine = 'no gym sessions logged (ever, or at least in recent history)'
+  if (gymEntries && gymEntries.length > 0) {
+    const lastAnyMs = Math.max(...gymEntries.map((g) => new Date(g.start_time as string).getTime()))
+    const daysSinceAny = Math.floor((nowMs - lastAnyMs) / 86_400_000)
+    const lastByType = new Map<string, number>()
+    for (const g of gymEntries) {
+      const startMs = new Date(g.start_time as string).getTime()
+      for (const t of (g.tags as string[] | null) ?? []) {
+        if (!WORKOUT_TYPES.includes(t as (typeof WORKOUT_TYPES)[number])) continue
+        if (!lastByType.has(t) || startMs > lastByType.get(t)!) lastByType.set(t, startMs)
+      }
+    }
+    const typeLines = [...lastByType.entries()]
+      .map(([type, ms]) => {
+        const days = Math.floor((nowMs - ms) / 86_400_000)
+        const threshold = RECOVERY_DAYS[type] ?? DEFAULT_RECOVERY_DAYS
+        return { type, days, eligible: days >= threshold }
+      })
+      .sort((a, b) => b.days - a.days)
+    const eligible = typeLines.filter((t) => t.eligible)
+    const recLine = eligible.length
+      ? ` Most overdue eligible type: ${eligible[0].type} (${eligible[0].days}d since last).`
+      : typeLines.length
+        ? ' No type is past its recovery threshold yet.'
+        : ''
+    gymLine = `Days since any gym session: ${daysSinceAny}${daysSinceAny >= 3 ? ' (past the 3-day point where comeback odds drop sharply)' : ''}. By type: ${typeLines.length ? typeLines.map((t) => `${t.type} ${t.days}d`).join(', ') : '(no tagged sessions yet)'}.${recLine}`
+  }
+
+  // Nap window: only surfaced as a POSSIBILITY when in-window and debt is real
+  // — the model still decides whether to raise it. Snap to 20min or 90min if used.
+  const nowLocalMins = (() => {
+    const [hh, mm] = isoToLocal(new Date(nowMs).toISOString(), tz).slice(11).split(':').map(Number)
+    return hh * 60 + mm
+  })()
+  const inNapWindow = nowLocalMins >= 13 * 60 && nowLocalMins <= 16 * 60
+  const napLine = inNapWindow
+    ? 'Current local time is within the typical post-lunch nap window (13:00-16:00) — if elevated sleep debt supports it, a nap should be ~20min (quick) or ~90min (full cycle), never in between, and not so close to bedtime it cuts into tonight\'s sleep.'
+    : null
 
   return [
     `Tracked last 7 days: ${catLine}.`,
-    `Sleep: ${sleepLine}.`,
+    `Sleep: ${sleepLine}`,
+    `Workout rotation: ${gymLine}`,
     `Yesterday total tracked: ${h(yesterdayMs)}h. Today so far: ${h(todayMs)}h.`,
+    ...(napLine ? [napLine] : []),
   ].join('\n')
 }
 
@@ -1493,6 +1584,9 @@ HOW TO BEHAVE:
 - Converse naturally. Ask at most 1–2 sharp clarifying questions when details are missing. Don't interrogate.
 - Make proactive suggestions (buffers between meetings, breaks, deep-work blocks, wind-down) but keep the user in control.
 - Keep replies short — a few sentences. This may be read aloud by a voice assistant, so write for the ear: no markdown, no bullet symbols, no emoji.
+- BALANCED LIFE, EVIDENCE-DRIVEN: the user has explicitly asked to be nudged when the EVIDENCE SNAPSHOT shows he's overreaching — he knows he gets too aggressive with work and lets sleep/gym slip, and wants you to catch it, not just accommodate it. When the snapshot shows a real signal (elevated sleep debt, a gym gap past its threshold, a nap window with real debt behind it), don't just silently fold it into the schedule — SAY it, plainly, citing the number ("you're ~2h short on sleep over the last week" / "it's been 4 days since a gym session"). If the signal is ambiguous rather than clear (e.g. borderline nap window), ask ONE direct question instead of guessing ("are you feeling sleepy right now, or good to push on?") rather than silently assuming.
+- WHEN SIGNALS STACK, BE BLUNT: if sleep debt, gym gap, and the user's own stated intent all point the same direction (e.g. he wants to "just work" while sleep has been bad AND the gym gap is past threshold), say so directly and recommend the corrective action plainly (e.g. "you're behind on sleep and it's been a while since the gym — I'd take today as a rest/recover day and protect sleep, not push more work") rather than hedging it into a soft suggestion. He has said he wants this — don't soften it into disappearing.
+- SLEEP EVIDENCE IS NOT A REASON TO SKIP THE GYM ON ITS OWN: his own tracked data shows one bad night does not measurably hurt next-day performance — a single rough night is not grounds to suggest skipping the gym. Only SUSTAINED multi-day sleep debt, or the gym gap itself, are grounds for a rest-day suggestion.
 
 ACTING WITH TOOLS (you are an agent, not just a planner):
 - You can list/stop/start/insert/edit/delete the user's REAL tracked time entries and planned schedule blocks. Use tools whenever the user asks you to change something real — don't just talk about it.
