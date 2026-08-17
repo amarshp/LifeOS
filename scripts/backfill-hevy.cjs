@@ -142,8 +142,11 @@ async function main() {
   )
   const existing = await existingResp.json()
   if (!Array.isArray(existing)) throw new Error('failed to fetch existing entries: ' + JSON.stringify(existing))
-  const existingStarts = new Set(existing.map((e) => e.start_time))
-  const fresh = toInsert.filter((e) => !existingStarts.has(e.start_time))
+  // Compare by instant (epoch ms), not raw string: PostgREST returns
+  // "...+00:00" while parseHevyDate()'s toISOString() produces "...Z" for the
+  // same instant — a strict string Set.has() silently never matches either way.
+  const existingStarts = new Set(existing.map((e) => new Date(e.start_time).getTime()))
+  const fresh = toInsert.filter((e) => !existingStarts.has(new Date(e.start_time).getTime()))
   console.log(`${toInsert.length - fresh.length} already present (skipped), ${fresh.length} new to insert.`)
 
   if (DRY_RUN) {
