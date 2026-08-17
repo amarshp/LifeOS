@@ -20,10 +20,18 @@ interface Body {
   title?: string // raw title at insert time (guard against user edits)
 }
 
+// CORS: the Expo WEB build (localhost dev / testing) calls this directly from
+// a browser now (the client-JWT path) and needs preflight + explicit allow
+// headers; the DB trigger's server-to-server calls ignore these.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-enrich-key',
+} as const
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
 }
 
@@ -41,6 +49,7 @@ const RESPONSE_SCHEMA = {
 } as const
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
 
   const url = Deno.env.get('SUPABASE_URL')

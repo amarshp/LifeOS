@@ -14,9 +14,12 @@ import { emitTimerChange } from '../lib/timer-events'
 // start/log-entry action for several seconds. Never throws — a failed/slow
 // enrich just means the raw title stands until the async DB-trigger fallback
 // (still unchanged) catches it moments later.
-function quickEnrichInBackground(table: 'time_entries' | 'todos', id: string): void {
+function quickEnrichInBackground(table: 'time_entries' | 'todos', id: string, rawTitle: string): void {
   supabase.functions
-    .invoke('enrich-capture', { body: { table, id } })
+    // rawTitle lets enrich-capture bail if the user edits the title before
+    // this lands (same guard the DB-trigger path already relies on) instead
+    // of classifying stale content and clobbering a real edit.
+    .invoke('enrich-capture', { body: { table, id, title: rawTitle } })
     .then(({ data, error }) => {
       const applied = error ? null : (data as { applied?: Record<string, unknown> } | null)?.applied
       if (applied) emitTimerChange()
@@ -96,7 +99,7 @@ export async function startTimer(entry: TimeEntryInsert): Promise<TimeEntry> {
     .single<TimeEntry>()
 
   if (error) throw error
-  quickEnrichInBackground('time_entries', data.id)
+  quickEnrichInBackground('time_entries', data.id, data.title)
   return data
 }
 
@@ -173,7 +176,7 @@ export async function startTimerStopPrevious(params: {
       ...(params.calendarBlockId ? { calendar_block_id: params.calendarBlockId } : {}),
     })
   }
-  quickEnrichInBackground('time_entries', entryId)
+  quickEnrichInBackground('time_entries', entryId, params.title)
   return entryId
 }
 
@@ -350,7 +353,7 @@ export async function addCompletedEntry(entry: {
 
   if (error) throw error
   await completeLinkedTodo(data.todo_id)
-  quickEnrichInBackground('time_entries', data.id)
+  quickEnrichInBackground('time_entries', data.id, data.title)
   return data
 }
 
