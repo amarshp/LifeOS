@@ -51,6 +51,7 @@
 - Stop-and-start: tap the stop button in the running-timer banner to stop the current timer and immediately open a new one
 - Running timer banner: persistent bar at the top of all non-home tabs showing the timer title, elapsed time, category-coloured pulse dot, and quick-stop button
 - Runaway-timer guard: a local notification fires at start + 6h for each running timer (even when the app is closed) so a forgotten timer nudges you to stop/review it; cancelled automatically on stop (`runawayNotify.ts`, reconciled from the tab root alongside Live Activities)
+- **Auto-cleanup on manual entries**: a manually-typed title/category gets classified right after capture (not just on the next few-seconds-later background pass) — the app calls the classifier directly and the entry corrects itself in place, usually within a few seconds, no user action needed. Agent-created entries skip this entirely (already clean from the model's own prompt)
 
 ### Log Past Entry
 - Log a completed time block with explicit start and end times (no running timer)
