@@ -721,7 +721,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       }
       const { data, error } = await supabase
         .from('time_entries')
-        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: [], todo_id: todoId ?? null })
+        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: [], todo_id: todoId ?? null, source: 'agent' })
         .select('id')
         .single()
       if (error) return { error: error.message }
@@ -781,6 +781,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
               user_id: ctx.userId, category_id: o.category_id, title: o.title,
               start_time: endIso, end_time: o.is_running ? null : oEnd,
               is_running: o.is_running === true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
+              source: 'agent',
             })
             ctx.actions.push(`Split "${o.title}" around the logged period`)
           } else if (oStart < startIso) {
@@ -790,6 +791,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
               await supabase.from('time_entries').insert({
                 user_id: ctx.userId, category_id: o.category_id, title: o.title,
                 start_time: endIso, is_running: true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
+                source: 'agent',
               })
               ctx.actions.push(`Trimmed "${o.title}" to ${isoToLocal(startIso, tz)} and resumed it after`)
             } else {
@@ -807,7 +809,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
 
       const { data, error } = await supabase
         .from('time_entries')
-        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: [], todo_id: todoId ?? null })
+        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: [], todo_id: todoId ?? null, source: 'agent' })
         .select('id')
         .single()
       if (error) return { error: error.message }
@@ -1051,6 +1053,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
           notes: str('notes') ?? null,
           status: 'open',
           kind,
+          source: 'agent',
         })
         .select('id')
         .single()
