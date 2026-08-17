@@ -1296,13 +1296,13 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     case 'web_search': {
       const query = str('query')
       if (!query) return { error: 'query required' }
-      // Cheap backstop, not a real content filter (that'd need another model
-      // call to do properly): a real search query is a handful of words. A
-      // long one is the likely shape of an accidental verbatim dump of the
-      // user's own data (a calendar title, a memory, a todo) into a request
-      // that leaves the app toward a live search backend — reject and make
-      // the model retry with something tighter instead of sending it.
-      if (query.length > 150) return { error: 'query too long — use a short, focused search phrase, not pasted context' }
+      // A length cap was tried here as a leak backstop and reverted: length
+      // doesn't distinguish "leaked private data" from "legitimately long
+      // query" (a quoted error message, an address, a document title) — it
+      // just blocked real searches without reliably catching the thing it
+      // was meant to catch. The prompt's explicit instruction not to search
+      // the user's own LifeOS data is the actual safeguard; gpt-5.1 already
+      // has all of that data in its own context regardless of this tool.
       try {
         const answer = await webSearchViaGpt(query, openaiKey)
         return { ok: true, answer }
