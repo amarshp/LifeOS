@@ -14,6 +14,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { sendActivityUpdate } from '../_shared/apns.ts'
+import { computeSleepEvidence, computeWorkoutEvidence, isNapWindow } from '../_shared/wellness-evidence.ts'
 
 // CORS: the Expo WEB build calls this from a browser (app-open tick).
 const CORS_HEADERS = {
@@ -55,7 +56,7 @@ function addDaysStr(dateStr: string, days: number): string {
 
 interface DetectedConcern {
   key: string
-  kind: 'gap' | 'drift' | 'commitment' | 'morning' | 'evening'
+  kind: 'gap' | 'drift' | 'commitment' | 'morning' | 'evening' | 'gym-gap' | 'sleep-debt' | 'post-activity-nap'
   title: string
   detail: string
   evidence: string
@@ -68,6 +69,9 @@ const COOLDOWN_MIN: Record<DetectedConcern['kind'], number> = {
   commitment: 240,
   morning: 24 * 60,
   evening: 24 * 60,
+  'gym-gap': 24 * 60,
+  'sleep-debt': 24 * 60,
+  'post-activity-nap': 4 * 60,
 }
 
 interface Prefs {
@@ -96,9 +100,9 @@ async function detectConcerns(
 
   // One day of context (entries can start yesterday and spill over midnight).
   const sinceIso = new Date(nowMs - 36 * 3600_000).toISOString()
-  const [{ data: entries }, { data: blocks }, { data: todos }, { data: journal }] = await Promise.all([
+  const [{ data: entries }, { data: blocks }, { data: todos }, { data: journal }, { data: categories }] = await Promise.all([
     db.from('time_entries')
-      .select('id, title, start_time, end_time, is_running, todo_id')
+      .select('id, title, category_id, start_time, end_time, is_running, todo_id')
       .eq('user_id', userId).is('deleted_at', null).gte('start_time', sinceIso).order('start_time'),
     db.from('calendar_blocks')
       .select('id, title, start_time, end_time, todo_id')
@@ -107,6 +111,16 @@ async function detectConcerns(
       .select('id, title, kind, deadline, next_due, recurrence')
       .eq('user_id', userId).eq('status', 'open').is('deleted_at', null),
     db.from('journal_entries').select('id').eq('user_id', userId).eq('date', today).maybeSingle(),
+    db.from('categories').select('id, name').eq('user_id', userId).is('deleted_at', null),
+  ])
+  // catName must be built AFTER categories resolves — computeSleepEvidence calls
+  // it during its own internal query, which runs concurrently with nothing else
+  // here, so `categories` needs to already be a settled value, not a promise
+  // still in flight (a same-Promise.all attempt at this deadlocks/TDZ-errors).
+  const catName = (id: string | null) => (categories ?? []).find((c) => c.id === id)?.name ?? null
+  const [sleepEv, workoutEv] = await Promise.all([
+    computeSleepEvidence(db, userId, tz, catName),
+    computeWorkoutEvidence(db, userId),
   ])
 
   const running = (entries ?? []).filter((e) => e.is_running)
@@ -201,6 +215,57 @@ async function detectConcerns(
         title: 'Two-minute review?',
         detail: 'The Agent will summarize today and ask a couple of questions.',
         evidence: `${Math.round(trackedMs / 3600_000)}h tracked today, no journal entry yet`,
+        importance: 1,
+      })
+    }
+  }
+
+  // GYM-GAP — a real gap in gym sessions is worth a daily nudge until resolved.
+  // Undated key: this is a continuous concern (like COMMITMENT), not a
+  // daily-reset one — it stays open and just gets its detail/evidence
+  // refreshed each run until the user actually goes and it clears itself.
+  if (workoutEv.daysSinceAny !== null && workoutEv.daysSinceAny >= 3) {
+    const overdue = workoutEv.mostOverdueEligible
+    out.push({
+      key: 'gym-gap',
+      kind: 'gym-gap',
+      title: 'Gym gap is growing',
+      detail: `${workoutEv.daysSinceAny} days since your last gym session${overdue ? ` — ${overdue.type} is the most overdue` : ''}. Worth getting back today.`,
+      evidence: `daysSinceAny=${workoutEv.daysSinceAny}`,
+      importance: workoutEv.daysSinceAny >= 7 ? 3 : 2,
+    })
+  }
+
+  // SLEEP-DEBT — elevated multi-day debt, nudged in the evening when an
+  // earlier night is still actionable (mirrors EVENING's hour gate/dated key).
+  if (hour >= 19 && hour < 23 && sleepEv.debtH !== null && sleepEv.debtH > 3) {
+    out.push({
+      key: `sleep-debt:${today}`,
+      kind: 'sleep-debt',
+      title: 'Sleep debt building',
+      detail: `Running ~${sleepEv.debtH.toFixed(1)}h short of target over the last week. Worth an earlier night — aim for lights out around ${sleepEv.recBedClock}.`,
+      evidence: `debtH=${sleepEv.debtH.toFixed(1)}, avgH=${sleepEv.avgH?.toFixed(1)}, targetH=${sleepEv.targetH?.toFixed(1)}`,
+      importance: sleepEv.debtH > 6 ? 3 : 2,
+    })
+  }
+
+  // POST-ACTIVITY NAP — just wrapped up a Commute/Office block, nap window is
+  // open, and there's real debt behind it. This is the "as soon as I get
+  // home" trigger — it rides the existing 30-min cron / app-foreground tick,
+  // not a new real-time pipeline (see PLANNING_MODE_SPEC.md §6b).
+  if (isNapWindow(tz) && sleepEv.debtH !== null && sleepEv.debtH > 1 && completed.length > 0) {
+    const lastCompleted = completed.reduce((a, b) =>
+      new Date(a.end_time as string).getTime() > new Date(b.end_time as string).getTime() ? a : b,
+    )
+    const endedMinAgo = Math.round((nowMs - new Date(lastCompleted.end_time as string).getTime()) / 60_000)
+    const justEndedName = (catName(lastCompleted.category_id as string | null) ?? '').toLowerCase()
+    if (endedMinAgo <= 20 && (justEndedName === 'commute' || justEndedName === 'office')) {
+      out.push({
+        key: `post-activity-nap:${today}`,
+        kind: 'post-activity-nap',
+        title: 'Just got in — worth a nap?',
+        detail: `You just finished "${lastCompleted.title}" and sleep debt is running ~${sleepEv.debtH.toFixed(1)}h — a short nap (~20min) or a full cycle (~90min) could help before you go on. Your call.`,
+        evidence: `justEnded="${lastCompleted.title}" (${justEndedName}) ${endedMinAgo}min ago, debtH=${sleepEv.debtH.toFixed(1)}, napWindow=true`,
         importance: 1,
       })
     }

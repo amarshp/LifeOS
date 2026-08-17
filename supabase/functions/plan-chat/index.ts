@@ -11,6 +11,7 @@
 // Secret:  npx supabase secrets set OPENAI_API_KEY=sk-...
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { computeSleepEvidence, computeWorkoutEvidence, isNapWindow } from '../_shared/wellness-evidence.ts'
 
 const MODEL = 'gpt-5.1'
 // Reasoning effort for gpt-5.x: 'low' keeps latency inside OPENAI_TIMEOUT_MS
@@ -1323,59 +1324,31 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
  * per category, sleep pattern, and today's coverage. Deterministic numbers —
  * the model interprets them, it never invents them.
  */
-// Canonical workout-type tags — must match the vocabulary enrich-capture writes
-// (see supabase/functions/enrich-capture/index.ts) and PLANNING_MODE_SPEC.md §5.
-// Recovery thresholds (days) come from PPL/exercise-science prior art in the
-// spec: legs/lower need more recovery than push/pull/upper/full-body/boxing.
-const WORKOUT_TYPES = ['push', 'pull', 'legs', 'upper', 'lower', 'full-body', 'boxing'] as const
-const RECOVERY_DAYS: Record<string, number> = { legs: 3, lower: 3 }
-const DEFAULT_RECOVERY_DAYS = 2
-
-function medianMinutes(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-}
-
-function minutesToClock(mins: number): string {
-  const m = ((Math.round(mins) % 1440) + 1440) % 1440
-  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
-}
-
 async function buildEvidenceSnapshot(
   supabase: SupabaseClient,
+  userId: string,
   tz: string,
   catName: (id: string | null) => string | null,
 ): Promise<string> {
   const nowMs = Date.now()
   const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString()
 
-  const [{ data: entries }, { data: gymEntries }] = await Promise.all([
+  const [{ data: entries }, sleepEv, workoutEv] = await Promise.all([
     supabase
       .from('time_entries')
       .select('category_id, title, start_time, end_time, is_running')
       .is('deleted_at', null)
       .gte('start_time', sinceIso)
       .order('start_time'),
-    // No time floor: a gap can run past any fixed window (e.g. months), and the
-    // exact gap length is the important signal, not just "long ago." Ordered
-    // + limited instead, which comfortably covers a full rotation history.
-    supabase
-      .from('time_entries')
-      .select('tags, start_time, end_time, is_running')
-      .is('deleted_at', null)
-      .eq('title', 'Gym')
-      .order('start_time', { ascending: false })
-      .limit(60),
+    computeSleepEvidence(supabase, userId, tz, catName),
+    computeWorkoutEvidence(supabase, userId),
   ])
   // Do NOT early-return here even if `entries` is empty — a quiet week (no
-  // tracking at all) is exactly when the gym-gap signal from `gymEntries`
+  // tracking at all) is exactly when the gym-gap signal from `workoutEv`
   // (queried with no 7-day floor) matters most and must still be reported.
   const today = todayLocal(tz)
   const yesterday = addDaysStr(today, -1)
   const catMs = new Map<string, number>()
-  const sleepByNight = new Map<string, number>() // local wake date → ms
-  const sleepWakeMins: number[] = [] // minute-of-day the sleep entry ENDED, one per night
   let todayMs = 0
   let yesterdayMs = 0
 
@@ -1386,16 +1359,9 @@ async function buildEvidenceSnapshot(
     const durMs = Math.min(endMs, nowMs) - startMs
     const name = catName(e.category_id as string | null) ?? 'Other'
     catMs.set(name, (catMs.get(name) ?? 0) + durMs)
-    const endLocal = isoToLocal(new Date(Math.min(endMs, nowMs)).toISOString(), tz)
-    const endLocalDate = endLocal.slice(0, 10)
+    const endLocalDate = isoToLocal(new Date(Math.min(endMs, nowMs)).toISOString(), tz).slice(0, 10)
     if (endLocalDate === today) todayMs += durMs
     if (endLocalDate === yesterday) yesterdayMs += durMs
-    const isSleep = name.toLowerCase().includes('sleep') || (e.title as string).toLowerCase().includes('sleep')
-    if (isSleep) {
-      sleepByNight.set(endLocalDate, (sleepByNight.get(endLocalDate) ?? 0) + durMs)
-      const [hh, mm] = endLocal.slice(11).split(':').map(Number)
-      sleepWakeMins.push(hh * 60 + mm)
-    }
   }
 
   const h = (ms: number) => (ms / 3_600_000).toFixed(1)
@@ -1404,64 +1370,36 @@ async function buildEvidenceSnapshot(
       .sort((a, b) => b[1] - a[1])
       .map(([name, ms]) => `${name} ${h(ms)}h`)
       .join(', ') || '(nothing tracked)'
-  const nights = [...sleepByNight.values()]
-  let sleepLine: string
-  if (nights.length) {
-    const avgH = nights.reduce((a, b) => a + b, 0) / nights.length / 3_600_000
-    // Own rolling average, clamped to the NSF adult band — not a generic fixed number.
-    const targetH = Math.min(9, Math.max(7, avgH))
-    const debtH = nights.reduce((sum, ms) => sum + (targetH - ms / 3_600_000), 0)
-    const recWake = minutesToClock(medianMinutes(sleepWakeMins))
-    const recBed = minutesToClock(medianMinutes(sleepWakeMins) - targetH * 60)
-    const debtNote = debtH > 0.5 ? `, running ~${debtH.toFixed(1)}h short of target over these nights` : ''
-    sleepLine = `sleep logged ${nights.length} night(s), avg ${avgH.toFixed(1)}h/night, target ~${targetH.toFixed(1)}h (own rolling avg, clamped 7-9h)${debtNote}. Typical wake ~${recWake} → derived bedtime for target ~${recBed}.`
-  } else {
-    sleepLine = 'no sleep entries logged in the last 7 days'
-  }
+
+  const sleepLine = sleepEv.nightsLogged
+    ? `sleep logged ${sleepEv.nightsLogged} night(s), avg ${sleepEv.avgH!.toFixed(1)}h/night, target ~${sleepEv.targetH!.toFixed(1)}h (own rolling avg, clamped 7-9h)${
+        sleepEv.debtH! > 0.5 ? `, running ~${sleepEv.debtH!.toFixed(1)}h short of target over these nights` : ''
+      }. Typical wake ~${sleepEv.recWakeClock} → derived bedtime for target ~${sleepEv.recBedClock}.`
+    : 'no sleep entries logged in the last 7 days'
 
   // Workout rotation: last logged session per canonical type, and any-type gap
   // (the sharper, adherence-critical signal — see PLANNING_MODE_SPEC.md §4).
-  let gymLine = 'no gym sessions logged (ever, or at least in recent history)'
-  if (gymEntries && gymEntries.length > 0) {
-    const lastAnyMs = Math.max(...gymEntries.map((g) => new Date(g.start_time as string).getTime()))
-    const daysSinceAny = Math.floor((nowMs - lastAnyMs) / 86_400_000)
-    const lastByType = new Map<string, number>()
-    for (const g of gymEntries) {
-      const startMs = new Date(g.start_time as string).getTime()
-      for (const t of (g.tags as string[] | null) ?? []) {
-        if (!WORKOUT_TYPES.includes(t as (typeof WORKOUT_TYPES)[number])) continue
-        if (!lastByType.has(t) || startMs > lastByType.get(t)!) lastByType.set(t, startMs)
-      }
-    }
-    const typeLines = [...lastByType.entries()]
-      .map(([type, ms]) => {
-        const days = Math.floor((nowMs - ms) / 86_400_000)
-        const threshold = RECOVERY_DAYS[type] ?? DEFAULT_RECOVERY_DAYS
-        return { type, days, eligible: days >= threshold }
-      })
-      .sort((a, b) => b.days - a.days)
-    const eligible = typeLines.filter((t) => t.eligible)
-    const recLine = eligible.length
-      ? ` Most overdue eligible type: ${eligible[0].type} (${eligible[0].days}d since last).`
-      : typeLines.length
-        ? ' No type is past its recovery threshold yet.'
-        : ''
-    // No editorial annotation on daysSinceAny (e.g. a specific "comeback odds"
-    // curve) — an independent re-derivation from the raw Hevy export did not
-    // reproduce the cited curve (not even its shape), so that precision isn't
-    // trustworthy enough to assert as fact here. Report the plain count and
-    // let the model's own reasoning (with its hedging rules) do the framing.
-    gymLine = `Days since any gym session: ${daysSinceAny}. By type: ${typeLines.length ? typeLines.map((t) => `${t.type} ${t.days}d`).join(', ') : '(no tagged sessions yet)'}.${recLine}`
-  }
+  // No editorial annotation on daysSinceAny (e.g. a specific "comeback odds"
+  // curve) — an independent re-derivation from the raw Hevy export did not
+  // reproduce the cited curve (not even its shape), so that precision isn't
+  // trustworthy enough to assert as fact here. Report the plain count and let
+  // the model's own reasoning (with its hedging rules) do the framing.
+  const gymLine =
+    workoutEv.daysSinceAny === null
+      ? 'no gym sessions logged (ever, or at least in recent history)'
+      : `Days since any gym session: ${workoutEv.daysSinceAny}. By type: ${
+          workoutEv.byType.length ? workoutEv.byType.map((t) => `${t.type} ${t.days}d`).join(', ') : '(no tagged sessions yet)'
+        }.${
+          workoutEv.mostOverdueEligible
+            ? ` Most overdue eligible type: ${workoutEv.mostOverdueEligible.type} (${workoutEv.mostOverdueEligible.days}d since last).`
+            : workoutEv.byType.length
+              ? ' No type is past its recovery threshold yet.'
+              : ''
+        }`
 
   // Nap window: only surfaced as a POSSIBILITY when in-window and debt is real
   // — the model still decides whether to raise it. Snap to 20min or 90min if used.
-  const nowLocalMins = (() => {
-    const [hh, mm] = isoToLocal(new Date(nowMs).toISOString(), tz).slice(11).split(':').map(Number)
-    return hh * 60 + mm
-  })()
-  const inNapWindow = nowLocalMins >= 13 * 60 && nowLocalMins <= 16 * 60
-  const napLine = inNapWindow
+  const napLine = isNapWindow(tz)
     ? 'Current local time is within the typical post-lunch nap window (13:00-16:00) — if elevated sleep debt supports it, a nap should be ~20min (quick) or ~90min (full cycle), never in between, and not so close to bedtime it cuts into tonight\'s sleep.'
     : null
 
@@ -1980,7 +1918,7 @@ Deno.serve(async (req) => {
       .is('deleted_at', null)
       .order('start_time', { ascending: false })
       .limit(5),
-    buildEvidenceSnapshot(supabase, timezone, (id) => cats.find((c) => c.id === id)?.name ?? null)
+    buildEvidenceSnapshot(supabase, userData.user.id, timezone, (id) => cats.find((c) => c.id === id)?.name ?? null)
       .catch(() => '(snapshot unavailable)'),
   ])
 
