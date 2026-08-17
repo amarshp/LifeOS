@@ -235,6 +235,24 @@ struct StopIntent: AppIntent {
   }
 }
 
+// One-tap stop for the Lock Screen / Control Center control — NO parameter,
+// so it never shows a dialog. Sends a bare "stop" and lets voice_track_admin's
+// existing fallback resolve it server-side (most-recently-started running
+// entry) — the same path a bare spoken "stop" already takes, just without the
+// dictation dialog StopDictateIntent forces even when there's nothing to
+// disambiguate.
+@available(iOS 16.0, *)
+struct StopCurrentIntent: AppIntent {
+  static var title: LocalizedStringResource = "Quick stop"
+  static var openAppWhenRun: Bool = false
+  static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+  func perform() async throws -> some IntentResult {
+    await runTrack(title: "stop")
+    return .result()
+  }
+}
+
 // Two-step stop fallback: "Stop in LifeOS" → Siri asks → dictate the task.
 @available(iOS 16.0, *)
 struct StopDictateIntent: AppIntent {
@@ -288,6 +306,14 @@ struct LifeOSAppShortcuts: AppShortcutsProvider {
       ],
       shortTitle: "Stop",
       systemImageName: "stop.circle"
+    )
+    AppShortcut(
+      intent: StopCurrentIntent(),
+      phrases: [
+        "Quick stop in \(.applicationName)",
+      ],
+      shortTitle: "Quick stop",
+      systemImageName: "stop.circle.fill"
     )
     AppShortcut(
       intent: StopDictateIntent(),

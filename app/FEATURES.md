@@ -88,6 +88,7 @@
 - Unsaved-changes alert on backdrop tap with Discard / Keep editing / Save options
 - "Set start to last stop time" and "Set end to current time" shortcut buttons in the entry edit sheet
 - Resume a stopped entry: tapping "Set end to current time" flips that same button to "Resume timer"; tapping it re-opens the entry (applies any field edits, clears the end time, marks it running again) to undo an accidental stop — respects the 2-running-timer limit and surfaces failures inline. Resets to "Set end to current time" when the sheet is reopened
+- **Contiguous-boundary auto-extend**: changing an entry's start time (via the edit sheet or the agent's `update_time_entry` tool) auto-extends an immediately-preceding, touching entry's end time to match, so back-to-back entries never grow a gap between them. Skipped if it would collapse the previous entry to zero/negative duration
 
 ## Home View
 - Live timer card showing title, elapsed time, and category-coloured pulse dot
@@ -175,6 +176,7 @@
 - **The plan card only updates when the model actually touches it**: a turn that doesn't call `propose_plan`/`clear_plan` (e.g. "looks good", "what's left today?") leaves the on-screen plan exactly as it was, instead of the old structured-output shape where every turn silently reported `plan: null` and could wipe the card mid-conversation
 - **Edit and Regenerate**: long-press a user message to edit it (loads the text back into the input, truncating the conversation from there) or the last agent reply to regenerate it. If the turn(s) being discarded made real changes (started a timer, added a block…), a confirm dialog lists them first — editing/regenerating doesn't undo what already happened, only what's shown in the transcript
 - **Stop keeps what's already written**: hitting Stop mid-reply no longer discards the partial text the model had already streamed out — it's kept as the message, just cut short
+- **No more stray text before a tool call**: when the model streams a short preamble before deciding to call a tool (the round's content gets discarded server-side, not shown as the final reply), the server now emits a `reset` SSE event so the client clears what it had already displayed — previously this leftover fragment could show as blank/garbled lines ahead of the real answer
 - Apply: one tap materializes the plan into `calendar_blocks` for that date (shows in Day/Home). Replace semantics — re-applying wipes the prior AI plan for the day so there are never duplicates. Items with no matching category are reported, not silently dropped
 - Backed by `daily_plans` + `daily_plan_items` (provenance: source=ai, prompt, model, generated_at). OpenAI key stays server-side in the `plan-chat` edge function (gpt-5.1, JWT-verified)
 
@@ -200,6 +202,7 @@
 ## Lock Screen / Shortcut quick-log (iOS)
 - The "New LifeOS entry" App Intent appears as a Shortcuts action → build a shortcut with the Task param set to "Ask Each Time" (text box) + optional "Open App", and pin it as a Lock Screen widget / Home Screen icon / Control Center control / Action button
 - Same enqueue→drain pipeline as Siri (backdated, `review` tag, auto-category)
+- **Quick stop** (`StopCurrentIntent`): a zero-parameter App Intent ("Quick stop in LifeOS") for a one-tap Lock Screen/Control Center stop control — no dialog, no "which task?" prompt. Reuses the server's existing bare-"stop" fallback (stops the most-recently-started running entry), unlike the Siri "stop \<title>" phrase which always resolves a parameter and so always prompted even when only one timer was running
 
 ## Auth
 - Email/password sign in & sign up via Supabase

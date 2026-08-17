@@ -834,6 +834,31 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         updates.is_running = false
       }
       if (Object.keys(updates).length === 0) return { error: 'nothing to update' }
+
+      // Moving the start away from an entry that was touching it right before
+      // would silently leave a gap (moved later) or an overlap (moved earlier)
+      // on the previous entry. Auto-extend/trim that neighbor to the new
+      // boundary — skipped if it would collapse it to zero/negative duration.
+      if (typeof updates.start_time === 'string') {
+        const { data: oldRow } = await supabase.from('time_entries').select('start_time').eq('id', id).single()
+        const oldStart = oldRow?.start_time as string | undefined
+        if (oldStart && oldStart !== updates.start_time) {
+          const { data: prev } = await supabase
+            .from('time_entries')
+            .select('id, title, start_time')
+            .eq('user_id', ctx.userId)
+            .eq('end_time', oldStart)
+            .is('deleted_at', null)
+            .neq('id', id)
+            .limit(1)
+            .maybeSingle()
+          if (prev && (prev.start_time as string) < (updates.start_time as string)) {
+            await supabase.from('time_entries').update({ end_time: updates.start_time }).eq('id', prev.id)
+            ctx.actions.push(`Extended "${prev.title}" to ${isoToLocal(updates.start_time as string, tz)} to stay contiguous`)
+          }
+        }
+      }
+
       const { data, error } = await supabase
         .from('time_entries')
         .update(updates)
@@ -1430,7 +1455,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - Quick schedule edits ("push my call to 3", "add dentist at 4") → use the calendar block tools on the right date.
 - TASKS: you manage the user's backlog too. When they mention something they need to do without a fixed time ("remind me to renew my license", "I should call the plumber sometime") → add_todo. When they say they finished a task → complete_todo (plus log the time if they said when). Linking work to tasks: pass todo_id on start_timer / add_completed_entry / add_calendar_block when the activity IS one of the backlog tasks — stopping a linked timer or logging a linked period completes the task automatically.
 - DATED COMMITMENT → BLOCK, NEVER TODO: if the user gives a specific day AND time ("Monday 6–7:30 PM interview", "Tuesday 6pm system design round", "Sunday 7pm meet Bharadwaj") it is a scheduled event — resolve the weekday to its date via UPCOMING DAYS and call add_calendar_block (flexibility fixed) on that date. Do NOT put a day+time commitment into the backlog with add_todo. Only genuinely timeless items ("sometime", "eventually", no day) go to add_todo. If several commitments come in one message, add_calendar_block for each on its correct date.
-- NAMED EVENT, NO TIME GIVEN → ADD THE TASK, AND ALSO ASK: something that's really a scheduled commitment by nature (an interview, a meeting, an appointment, a movie) but arrives with no day/time — still add_todo for it (never skip creating it), and ask for the time in the same reply so it can become a real block once you know it. A casual personal call ("call Mom", "call the plumber") is NOT calendar-shaped by default — just add_todo, no need to ask unless the user signals it needs a real slot. "sometime"/"eventually"/no day at all is a clean signal not to ask — just add_todo silently.
+- NAMED EVENT, NO TIME GIVEN — TWO SEPARATE STEPS, IN ORDER: (1) ALWAYS call add_todo for it first — this step is unconditional, never skip it no matter what step 2 decides. (2) THEN decide whether to also ask for the time in the same reply: ask if it's really a scheduled commitment by nature (an interview, a meeting, an appointment, a movie) — it needs a real slot eventually. Don't ask for a casual personal item ("call Mom", "call the plumber", "read that book") or anything the user already called "sometime"/"eventually" — the backlog entry alone is enough there.
 - REMINDERS: "remind me to X at TIME" → add_reminder (a phone ping at that moment, nothing on the calendar). A task with no time → add_todo. An appointment/block of time → calendar block or plan item. Pick ONE — do not double-book the same request as reminder + todo + block.
 - DEV NOTES: whenever the user complains about the APP ITSELF or wishes it worked differently ("this time is wrong", "it's slow", "I want a button that…"), call log_feedback with a crisp title — silently, then respond normally. These are for the developer, not the user's task list; never add_todo for app bugs.
 - Building or reworking the WHOLE day's plan → call propose_plan (the user taps Apply), NOT add_calendar_block calls.
@@ -1635,6 +1660,7 @@ async function runPlanTurn(
   openaiKey: string,
   onStep: (label: string) => void,
   onTextDelta: (chunk: string) => void,
+  onRoundDiscarded: () => void,
 ): Promise<TurnResult> {
   let reply = ''
   // Rounds 0..MAX_TOOL_ROUNDS-1 get every tool. Round MAX_TOOL_ROUNDS (the
@@ -1657,6 +1683,12 @@ async function runPlanTurn(
     )
 
     if (finishReason === 'tool_calls' && toolCalls.length > 0) {
+      // This round's content (if any — models sometimes stream a short preamble
+      // before deciding to call a tool) is NOT the final reply and gets
+      // discarded below. The client already showed it live as it streamed in —
+      // tell it to clear that now, before the next round's real text arrives,
+      // or leftover preamble fragments pile up ahead of the actual answer.
+      if (content) onRoundDiscarded()
       // Re-add the assistant's own tool-call turn so the next round (and the
       // model) sees it, same shape the non-streaming API used to hand back.
       convo.push({
@@ -1850,6 +1882,7 @@ Deno.serve(async (req) => {
             openaiKey,
             (label) => send('step', { label }),
             (chunk) => send('token', { chunk }),
+            () => send('reset', {}),
           )
           send('done', result)
         } catch (e) {
@@ -1876,7 +1909,7 @@ Deno.serve(async (req) => {
 
   // JSON path (back-compat): run to completion, return the whole payload at once.
   try {
-    const result = await runPlanTurn(ctx, convo, openaiKey, () => {}, () => {})
+    const result = await runPlanTurn(ctx, convo, openaiKey, () => {}, () => {}, () => {})
     return json(result)
   } catch (e) {
     const he = e instanceof HttpError ? e : new HttpError(500, e instanceof Error ? e.message : String(e))

@@ -152,6 +152,8 @@ export interface StreamHandlers {
   onStep?: (label: string) => void
   /** Fires per chunk of the final reply as the model writes it (word-by-word). */
   onToken?: (chunk: string) => void
+  /** Fires when a round's streamed text is discarded (it was a tool-call preamble, not the final reply) — clear any text shown so far. */
+  onReset?: () => void
   /** Abort to stop waiting for the turn (server work already in flight may still commit). */
   signal?: AbortSignal
 }
@@ -255,6 +257,7 @@ export async function sendMessageStream(
       }
       if (event === 'step') handlers.onStep?.(payload.label ?? '')
       else if (event === 'token') handlers.onToken?.(payload.chunk ?? '')
+      else if (event === 'reset') handlers.onReset?.()
       else if (event === 'error') streamErr = payload.error ?? 'plan-chat failed'
       else if (event === 'done') {
         result = {

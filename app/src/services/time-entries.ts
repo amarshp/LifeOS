@@ -195,7 +195,35 @@ export async function stopAllTimers(): Promise<void> {
   for (const r of running) await completeLinkedTodo(r.todo_id)
 }
 
+// Moving an entry's start away from an entry that was touching it right before
+// (prev.end_time === old start_time) would otherwise leave a silent gap (moved
+// later) or an unnoticed overlap (moved earlier). Auto-extend/trim that
+// neighbor's end to the new boundary — skipped if it would collapse the
+// neighbor to zero/negative duration, leaving it for manual resolution.
+async function extendTouchingNeighbor(entryId: string, oldStart: string, newStart: string): Promise<void> {
+  const { data: entry } = await supabase.from('time_entries').select('user_id').eq('id', entryId).maybeSingle()
+  if (!entry) return
+  const { data: prev } = await supabase
+    .from('time_entries')
+    .select('id, start_time')
+    .eq('user_id', (entry as { user_id: string }).user_id)
+    .eq('end_time', oldStart)
+    .is('deleted_at', null)
+    .neq('id', entryId)
+    .limit(1)
+    .maybeSingle()
+  if (!prev || (prev as { start_time: string }).start_time >= newStart) return
+  await supabase.from('time_entries').update({ end_time: newStart } as unknown as Record<string, unknown>).eq('id', (prev as { id: string }).id)
+}
+
 export async function updateEntry(id: string, updates: TimeEntryUpdate): Promise<TimeEntry> {
+  if (updates.start_time) {
+    const { data: current } = await supabase.from('time_entries').select('start_time').eq('id', id).maybeSingle()
+    const oldStart = (current as { start_time: string } | null)?.start_time
+    if (oldStart && oldStart !== updates.start_time) {
+      await extendTouchingNeighbor(id, oldStart, updates.start_time as string)
+    }
+  }
   const { data, error } = await supabase
     .from('time_entries')
     .update(updates as unknown as Record<string, unknown>)

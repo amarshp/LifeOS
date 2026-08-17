@@ -300,6 +300,10 @@ export default function PlanScreen() {
             streamingTextRef.current += chunk
             setStreamingText((t) => t + chunk)
           },
+          onReset: () => {
+            streamingTextRef.current = ''
+            setStreamingText('')
+          },
         })
         const withReply: UiMessage[] = [...next, { role: 'assistant', content: turn.reply, actions: turn.actions }]
         setMessages(withReply)
