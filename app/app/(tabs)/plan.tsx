@@ -424,6 +424,11 @@ export default function PlanScreen() {
     try {
       setTranscribing(true)
       const text = await transcribe(uri)
+      // STT is done — hand off to the "Thinking…" state right away. Leaving
+      // transcribing true across the whole `send()` call made the header keep
+      // showing "Transcribing…" through the entire AI turn, since headerSub
+      // checks transcribing before sending.
+      setTranscribing(false)
       if (text) {
         await send(text)
       } else {
@@ -837,9 +842,10 @@ export default function PlanScreen() {
             <View style={styles.streamRow}>
               {streamingText ? (
                 // The model has started writing its reply — show it growing
-                // word-by-word instead of the step spinner. flex:1 here lets it
-                // wrap within the bubble instead of pushing the stop button out.
-                <Text style={[styles.bubbleText, { color: colors.text1, flex: 1 }]}>{streamingText}</Text>
+                // word-by-word instead of the step spinner. flexShrink (not
+                // flex:1 — same ambiguous-width hazard as below) lets it wrap
+                // within the bubble instead of pushing the stop button out.
+                <Text style={[styles.bubbleText, { color: colors.text1, flexShrink: 1 }]}>{streamingText}</Text>
               ) : (
                 // No flex:1 on this branch — its content (spinner + short label +
                 // timer) is fixed-size, and a flex:1 child inside a shrink-to-fit
