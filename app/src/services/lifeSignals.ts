@@ -180,3 +180,32 @@ export async function getSleepGymCorrelation(lookbackDays = 90): Promise<Correla
     label: `Sleep and next-day gym attendance tend to ${r > 0 ? 'go together' : 'move apart'}`,
   }
 }
+
+// ─── Broad insight cards (all categories, agent-phrased) ──────────────────────
+// Server (pulse-insights edge fn) computes trend/attendance/fragmentation per
+// category, gated only on whether there's enough history to trust a
+// comparison — never on magnitude — then one LLM call phrases whichever
+// signals are real into cards. No card cap: Pulse scrolls, so every eligible
+// signal renders rather than forcing a fixed-size pick between e.g. a health
+// signal and a bigger-but-less-important one (validated in
+// scratchpad/insight-eval/ over 4 rounds before this was written).
+
+export interface InsightCard {
+  category: string
+  kind: 'trend' | 'attendance' | 'fragmentation'
+  headline: string
+  detail: string
+}
+
+/** Empty array on any failure (network, auth, malformed response) — the page
+ * already has a "nothing notable yet" empty state, so this fails silently
+ * into that rather than surfacing a background-load error. */
+export async function getPulseInsights(): Promise<InsightCard[]> {
+  try {
+    const { data, error } = await supabase.functions.invoke('pulse-insights', { body: {} })
+    if (error || !Array.isArray(data?.cards)) return []
+    return data.cards as InsightCard[]
+  } catch {
+    return []
+  }
+}

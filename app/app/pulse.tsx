@@ -5,8 +5,8 @@ import { useFocusEffect, useRouter } from 'expo-router'
 import { useSettings } from '../src/contexts/SettingsContext'
 import { fonts } from '../src/theme/tokens'
 import {
-  getGymFrequencyTrend, getDaysSinceLastSleep, getRecentNudgeOutcomes, getSleepGymCorrelation,
-  type WeekBucket, type NudgeOutcome, type CorrelationResult,
+  getGymFrequencyTrend, getDaysSinceLastSleep, getRecentNudgeOutcomes, getSleepGymCorrelation, getPulseInsights,
+  type WeekBucket, type NudgeOutcome, type CorrelationResult, type InsightCard,
 } from '../src/services/lifeSignals'
 
 // Pulse — the calm counterpart to /insights. Insights answers "did I track
@@ -28,6 +28,7 @@ export default function PulseScreen() {
   const [sleepQuietDays, setSleepQuietDays] = useState<number | null>(null)
   const [outcomes, setOutcomes] = useState<NudgeOutcome[]>([])
   const [correlation, setCorrelation] = useState<CorrelationResult | null>(null)
+  const [insightCards, setInsightCards] = useState<InsightCard[]>([])
   const [loaded, setLoaded] = useState(false)
 
   const load = useCallback(() => {
@@ -36,11 +37,13 @@ export default function PulseScreen() {
       getDaysSinceLastSleep(),
       getRecentNudgeOutcomes(30),
       getSleepGymCorrelation(90),
-    ]).then(([weeks, quiet, outs, corr]) => {
+      getPulseInsights(),
+    ]).then(([weeks, quiet, outs, corr, cards]) => {
       setGymWeeks(weeks)
       setSleepQuietDays(quiet)
       setOutcomes(outs)
       setCorrelation(corr)
+      setInsightCards(cards)
       setLoaded(true)
     }).catch(() => setLoaded(true))
   }, [])
@@ -53,7 +56,7 @@ export default function PulseScreen() {
   const showGymTrend = gymWeeks.some(w => w.count > 0)
   const showOutcomes = outcomes.length > 0
   const showCorrelation = correlation !== null
-  const nothingToShow = loaded && !showSleepQuiet && !showGymTrend && !showOutcomes && !showCorrelation
+  const nothingToShow = loaded && !showSleepQuiet && !showGymTrend && !showOutcomes && !showCorrelation && insightCards.length === 0
   const maxCount = Math.max(1, ...gymWeeks.map(w => w.count))
 
   return (
@@ -113,6 +116,14 @@ export default function PulseScreen() {
             </Text>
           </View>
         )}
+
+        {insightCards.map((c, i) => (
+          <View key={`${c.category}-${i}`} style={[styles.card, { borderColor: tc.border2 }]}>
+            <Text style={[styles.cardLabel, { color: tc.text3 }]}>{c.category.toUpperCase()}</Text>
+            <Text style={[styles.cardText, { color: tc.text1 }]}>{c.headline}</Text>
+            <Text style={[styles.cardSub, { color: tc.text3 }]}>{c.detail}</Text>
+          </View>
+        ))}
 
         {showOutcomes && (
           <View style={[styles.card, { borderColor: tc.border2 }]}>
