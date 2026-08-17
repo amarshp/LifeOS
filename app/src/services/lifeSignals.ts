@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase'
 export interface WeekBucket {
   weekStart: string // yyyy-mm-dd, Monday
   count: number
+  isCurrent: boolean // still in progress -- not comparable to a completed week
 }
 
 function mondayOf(d: Date): string {
@@ -42,9 +43,10 @@ export async function getGymFrequencyTrend(days: number): Promise<WeekBucket[]> 
   const out: WeekBucket[] = []
   const cursor = new Date(mondayOf(since) + 'T00:00:00Z')
   const last = new Date(mondayOf(now) + 'T00:00:00Z')
+  const lastKey = last.toISOString().slice(0, 10)
   while (cursor.getTime() <= last.getTime()) {
     const key = cursor.toISOString().slice(0, 10)
-    out.push({ weekStart: key, count: buckets.get(key) ?? 0 })
+    out.push({ weekStart: key, count: buckets.get(key) ?? 0, isCurrent: key === lastKey })
     cursor.setUTCDate(cursor.getUTCDate() + 7)
   }
   return out

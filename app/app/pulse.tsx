@@ -94,10 +94,10 @@ export default function PulseScreen() {
               {gymWeeks.map(w => (
                 <View key={w.weekStart} style={styles.sparkCol}>
                   <View style={styles.sparkTrack}>
-                    <View style={[styles.sparkBar, { height: `${(w.count / maxCount) * 100}%`, backgroundColor: tc.text2 }]} />
+                    <View style={[styles.sparkBar, { height: `${(w.count / maxCount) * 100}%`, backgroundColor: tc.text2, opacity: w.isCurrent ? 0.4 : 1 }]} />
                   </View>
                   <Text style={[styles.sparkCount, { color: tc.text1 }]}>{w.count}</Text>
-                  <Text style={[styles.sparkLabel, { color: tc.text4 }]}>{weekLabel(w.weekStart)}</Text>
+                  <Text style={[styles.sparkLabel, { color: tc.text4 }]}>{w.isCurrent ? 'so far' : weekLabel(w.weekStart)}</Text>
                 </View>
               ))}
             </View>

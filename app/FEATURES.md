@@ -49,6 +49,7 @@
 ### Pulse (calm signals page)
 - `/pulse`: a deliberately sparse counterpart to Insights (which answers "did I track accurately"; Pulse answers "is anything actually worth knowing"). Renders only real signal — no section shows a placeholder for data that isn't there
 - Sections, each independently gated: gym-frequency 8-week sparkline; a "sleep logging gone quiet" callout (days since last Sleep entry, ≥3); a confidence-gated sleep→next-day-gym correlation (Pearson, lagged one day, needs ≥14 paired nights, shown with a star rating and "not a cause, just a pattern" framing); "did it work" — recent resolved concerns that were actually pushed at least once
+- Gym sparkline's current (in-progress) week renders at reduced opacity with a "so far" label instead of a date, so a partially-elapsed week can't be misread as a real decline against completed weeks
 - Sleep-debt trend/correlation held back for now — logging is too sparse (1/7 nights at the time this shipped) to say anything real
 - Entry point: a small pulse-line icon on the Now tab (next to bell/gear), always present (not hidden behind a condition), with a quiet dot badge when something's fresh (sleep gone quiet, or a nudge resolved in the last 3 days)
 
