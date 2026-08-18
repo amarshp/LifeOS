@@ -60,7 +60,7 @@ export function useTimer() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [state.running])
+  }, [state.running, state.sessionStart])
 
   const start = useCallback(async (params: {
     categoryId: string
