@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native'
-import type { Category, TimeEntry } from '../types/database'
+import type { Category, TimeEntry, CalendarBlock } from '../types/database'
 import { fonts } from '../theme/tokens'
 import type { ColorPalette } from '../theme/tokens'
 import { mergeIntervals, clampIntervals, type Interval } from '../lib/planVsActual'
@@ -11,9 +11,13 @@ function dayStartLocal(date: string): Date {
   return new Date(y, m - 1, d, 0, 0, 0, 0)
 }
 
-// Toggl-style list rendering of one day's ACTUAL entries: fixed-height rows so
-// a 3-minute entry is as visible as a 3-hour one. Gaps between entries render
-// as their own tappable rows (up to now — future time is never a gap).
+// Toggl-style list rendering of one day: fixed-height rows so a 3-minute
+// entry is as visible as a 3-hour one. Gaps between ACTUAL entries render as
+// their own tappable rows (up to now — future time is never a gap). Planned
+// (not-yet-happened) calendar blocks render as their own row kind, same
+// upcoming-only set Timeline mode already shows (`getVisiblePlannedBlocks`)
+// — this view had never received `blocks` at all, so a scheduled block
+// never appeared here even though Timeline showed it fine.
 
 const GAP_MIN_MS = 60_000 // ignore sub-minute rounding gaps
 
@@ -21,11 +25,13 @@ interface DayListViewProps {
   date: string // YYYY-MM-DD (local)
   entries: TimeEntry[] // completed entries overlapping the window
   running: TimeEntry[]
+  blocks: CalendarBlock[] // visible (upcoming/in-progress) planned blocks — caller pre-filters via getVisiblePlannedBlocks
   categories: Category[]
   now: Date
   colors: ColorPalette
   onEntryPress: (entry: TimeEntry) => void
   onGapPress: (startIso: string, endIso: string) => void
+  onBlockPress: (block: CalendarBlock) => void
 }
 
 interface EntryRow {
@@ -42,7 +48,14 @@ interface GapRow {
   endMs: number
 }
 
-type Row = EntryRow | GapRow
+interface PlannedRow {
+  kind: 'planned'
+  block: CalendarBlock
+  startMs: number
+  endMs: number
+}
+
+type Row = EntryRow | GapRow | PlannedRow
 
 function fmtClock(ms: number): string {
   const d = new Date(ms)
