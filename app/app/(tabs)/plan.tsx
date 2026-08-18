@@ -119,6 +119,9 @@ export default function PlanScreen() {
   // turn) + the recent list shown while the chat is empty.
   const sessionIdRef = useRef<string | null>(null)
   const [recentSessions, setRecentSessions] = useState<ChatSession[]>([])
+  // undefined = not loaded yet (assume recently used, don't flash the
+  // onboarding example before we know); null = never chatted at all.
+  const [lastActivityAt, setLastActivityAt] = useState<string | null | undefined>(undefined)
 
   const recorder = useAudioRecorder(SPEECH_RECORDING)
   const recorderState = useAudioRecorderState(recorder)
@@ -176,6 +179,14 @@ export default function PlanScreen() {
     if (messages.length > 0) return
     chatSessionsService.getRecentSessions(date).then(setRecentSessions).catch(() => {})
   }, [messages.length, date])
+
+  // Unscoped (not tied to the selected date) — decides whether the "how to
+  // use this" example still earns its place, or reads as clutter to someone
+  // who already knows the drill.
+  useEffect(() => {
+    if (messages.length > 0) return
+    chatSessionsService.getLastSessionActivity().then(setLastActivityAt).catch(() => setLastActivityAt(null))
+  }, [messages.length])
 
   // Persist the conversation after every completed turn (fire-and-forget).
   const persistSession = useCallback((msgs: UiMessage[], turnPlan: ProposedPlan | null, forDate: string) => {
@@ -681,6 +692,15 @@ export default function PlanScreen() {
   const busy = sending || transcribing
   const planItemCount = plan?.items.length ?? 0
 
+  // The "how this works" example is onboarding, not chrome — show it to a
+  // first-time user (lastActivityAt === null) or someone who's been away a
+  // week+, otherwise it's just repeating what they already know every time
+  // they open a fresh chat. `undefined` (not loaded yet) defaults to hidden
+  // so it never flashes in front of an active user.
+  const ONBOARDING_STALE_MS = 7 * 24 * 3600_000
+  const showOnboardingExample =
+    lastActivityAt === null || (typeof lastActivityAt === 'string' && Date.now() - new Date(lastActivityAt).getTime() > ONBOARDING_STALE_MS)
+
   // Only shown while something is actually happening — the empty-state copy
   // already covers the idle case, so a permanent "Tell me about your day"
   // line here would just be a redundant, oddly-placed label.
@@ -746,13 +766,17 @@ export default function PlanScreen() {
         {messages.length === 0 && (
           <View style={styles.emptyWrap}>
           <View style={styles.empty}>
-            <Text style={[styles.emptyTitle, { color: colors.text2 }]}>Plan your day, out loud or by text</Text>
-            <Text style={[styles.emptyBody, { color: colors.text3 }]}>
-              “Tomorrow I want to gym at 7, deep work from 9 to 12, lunch with mom, then admin in the
-              afternoon.” I’ll ask questions, suggest a schedule, and add it to your day. Mention a day
-              and I’ll plan that one — no need to touch the date arrows. Hold the mic to talk; release
-              to send.
-            </Text>
+            {showOnboardingExample && (
+              <>
+                <Text style={[styles.emptyTitle, { color: colors.text2 }]}>Plan your day, out loud or by text</Text>
+                <Text style={[styles.emptyBody, { color: colors.text3 }]}>
+                  “Tomorrow I want to gym at 7, deep work from 9 to 12, lunch with mom, then admin in the
+                  afternoon.” I’ll ask questions, suggest a schedule, and add it to your day. Mention a day
+                  and I’ll plan that one — no need to touch the date arrows. Hold the mic to talk; release
+                  to send.
+                </Text>
+              </>
+            )}
             <View style={styles.quickRow}>
               {([
                 { label: 'Plan my day', text: 'Plan my day.', today: false },

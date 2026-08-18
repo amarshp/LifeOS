@@ -500,22 +500,27 @@ export default function DayScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      const dates = listDates(windowStartDate, windowEndDate)
       // Also fetch the day before the window so a block that starts there and
       // spills past midnight still renders on the window's first day.
-      const blockDates = [addDays(windowStartDate, -1), ...dates]
-      const [cats, savedTagRows, tagUsageRows, blockDays, ents, lastStopped] = await Promise.all([
+      // getBlocksInRange does the whole window in 2 round-trips (one range
+      // query + one recurring-blocks query); the old per-date
+      // getEffectiveBlocksForDate loop fired 2 round-trips PER DATE (up to 12
+      // for a 5-day window), including refetching the same recurring-blocks
+      // table redundantly on every date — the main source of the "blank for
+      // a few seconds" load on this screen.
+      const blockRangeStart = addDays(windowStartDate, -1)
+      const [cats, savedTagRows, tagUsageRows, blocksInRange, ents, lastStopped] = await Promise.all([
         categoriesService.getCategories(),
         tagsService.getAllTags(),
         tagsService.getTagUsage(),
-        Promise.all(blockDates.map(date => calendarBlocksService.getEffectiveBlocksForDate(date))),
+        calendarBlocksService.getBlocksInRange(blockRangeStart, windowEndDate),
         timeEntriesService.getEntriesForDateRange(windowStartDate, windowEndDate),
         timeEntriesService.getLastStoppedEntry(),
       ])
       setCategories(cats)
       setSavedTags(savedTagRows)
       setTagUsage(tagUsageRows)
-      setBlocks(blockDays.flat())
+      setBlocks(blocksInRange)
       // Lower bound is one day before the window so a cross-midnight entry that
       // starts the prior evening and spills past midnight still renders.
       setEntries(ents.filter(entry => isDateInRange(toLocalDateStr(new Date(entry.start_time)), addDays(windowStartDate, -1), windowEndDate)))

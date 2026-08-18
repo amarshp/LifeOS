@@ -37,10 +37,33 @@ export function isOnLocalDay(startTimeIso: string, date: string): boolean {
   return localDateStr(new Date(startTimeIso)) === date
 }
 
-/** Keep only items whose `start_time` lands on local-calendar `date`. */
-export function filterByLocalDay<T extends { start_time: string }>(
+/**
+ * True when an item's [start, end] span overlaps local-calendar `date` at
+ * all — not just when its start falls on that day. A still-open span (no
+ * end_time) is treated as ending "now".
+ *
+ * Filtering on start-time-only membership (the old `isOnLocalDay`-per-item
+ * check) silently dropped the today-side portion of any entry that started
+ * the previous local day and ran past local midnight (e.g. a late-night
+ * session ending 3:30am) — the entry never entered "today"'s result set at
+ * all, so callers that already clamp start/end to the day's boundaries
+ * (Home's tracked-hours total, the 24h bar) had nothing to clamp: today's
+ * early-morning hours rendered as empty/untracked even though they were
+ * covered by that entry's tail end.
+ */
+export function overlapsLocalDay(startTimeIso: string, endTimeIso: string | null | undefined, date: string): boolean {
+  const [y, m, d] = date.split('-').map(Number)
+  const dayStartMs = new Date(y, m - 1, d, 0, 0, 0, 0).getTime()
+  const dayEndMs = new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
+  const startMs = new Date(startTimeIso).getTime()
+  const endMs = endTimeIso ? new Date(endTimeIso).getTime() : Date.now()
+  return startMs <= dayEndMs && endMs >= dayStartMs
+}
+
+/** Keep only items whose [start, end] span overlaps local-calendar `date`. */
+export function filterByLocalDay<T extends { start_time: string; end_time?: string | null }>(
   items: T[],
   date: string,
 ): T[] {
-  return items.filter(item => isOnLocalDay(item.start_time, date))
+  return items.filter(item => overlapsLocalDay(item.start_time, item.end_time, date))
 }

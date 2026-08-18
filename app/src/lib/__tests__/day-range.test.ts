@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { shiftDate, paddedDateRange, isOnLocalDay, filterByLocalDay } from '../day-range.ts'
+import { shiftDate, paddedDateRange, isOnLocalDay, filterByLocalDay, overlapsLocalDay } from '../day-range.ts'
 
 // Run under a specific zone:  TZ=Asia/Kolkata node --test
 //                             TZ=America/New_York node --test
@@ -46,10 +46,27 @@ test(`isOnLocalDay buckets by local calendar day [TZ=${TZ}]`, () => {
 test('filterByLocalDay keeps only matching local-day items', () => {
   const date = '2026-05-27'
   const items = [
-    { start_time: '2026-05-27T06:00:00Z' },
-    { start_time: '2026-05-25T06:00:00Z' },
+    { start_time: '2026-05-27T06:00:00Z', end_time: '2026-05-27T07:00:00Z' },
+    { start_time: '2026-05-25T06:00:00Z', end_time: '2026-05-25T07:00:00Z' },
   ]
   const kept = filterByLocalDay(items, date)
   // At minimum the far-off day (2 days earlier) is always excluded in any TZ.
   assert.ok(!kept.some(i => i.start_time === '2026-05-25T06:00:00Z'))
+})
+
+// Regression: an entry that starts the previous local day and runs past
+// local midnight must still overlap TODAY, not just yesterday — the bug
+// reported as "Home shows too few hours tracked / bar empty at the start of
+// the day" even though a late-night session covered those early hours.
+test(`overlapsLocalDay includes an entry that starts the day before and ends after local midnight [TZ=${TZ}]`, () => {
+  // Gate on the actual device offset (IST = UTC+5:30), not process.env.TZ —
+  // the TZ env var doesn't reliably propagate into node's process.env on
+  // every platform this runs on, even when the OS-level zone is IST.
+  if (new Date().getTimezoneOffset() !== -330) return
+  // 2026-05-26 23:30 IST -> 2026-05-27 03:30 IST
+  const start = '2026-05-26T18:00:00Z'
+  const end = '2026-05-26T22:00:00Z'
+  assert.equal(overlapsLocalDay(start, end, '2026-05-27'), true)
+  assert.equal(overlapsLocalDay(start, end, '2026-05-26'), true)
+  assert.equal(overlapsLocalDay(start, end, '2026-05-28'), false)
 })

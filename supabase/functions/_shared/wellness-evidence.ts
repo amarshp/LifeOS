@@ -214,12 +214,16 @@ export interface WorkoutEvidence {
  */
 export async function computeWorkoutEvidence(supabase: SupabaseClient, userId: string): Promise<WorkoutEvidence> {
   const nowMs = Date.now()
+  // Substring match, not exact "Gym" — agent-logged sessions carry a
+  // descriptive title (e.g. "Gym – upper body (push + pull)"), and there's
+  // no dedicated Gym category on the real account (workouts land under the
+  // generic "Activity" category), so title is the only reliable signal.
   const { data: gymEntries } = await supabase
     .from('time_entries')
     .select('tags, start_time')
     .eq('user_id', userId)
     .is('deleted_at', null)
-    .eq('title', 'Gym')
+    .ilike('title', '%gym%')
     .order('start_time', { ascending: false })
     .limit(60)
   if (!gymEntries || gymEntries.length === 0) {

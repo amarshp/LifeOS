@@ -29,6 +29,21 @@ export async function getRecentSessions(date?: string, limit = 12): Promise<Chat
   return (data ?? []) as ChatSession[]
 }
 
+/** Most recent chat activity across ALL dates (unscoped) — used to decide
+ * whether the Agent's onboarding example is still worth showing. Returns
+ * null for a user who has never chatted. */
+export async function getLastSessionActivity(): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('chat_sessions')
+    .select('updated_at')
+    .is('deleted_at', null)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data?.updated_at as string | undefined) ?? null
+}
+
 export async function createSession(params: {
   title: string
   date: string

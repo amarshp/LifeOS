@@ -20,14 +20,17 @@ function mondayOf(d: Date): string {
 
 /** Gym sessions per week, oldest first — the trend card's data. Includes
  * zero-count weeks (a gap must render as a gap, not silently vanish from the
- * series and read as continuous with whatever week comes next — Codex catch). */
+ * series and read as continuous with whatever week comes next — Codex catch).
+ * Substring title match (not exact "Gym"): agent-logged sessions carry a
+ * descriptive title ("Gym – upper body..."), matches wellness-evidence.ts's
+ * computeWorkoutEvidence so client/server agree on what counts as a session. */
 export async function getGymFrequencyTrend(days: number): Promise<WeekBucket[]> {
   const now = new Date()
   const since = new Date(now.getTime() - days * 86_400_000)
   const { data, error } = await supabase
     .from('time_entries')
     .select('start_time')
-    .eq('title', 'Gym')
+    .ilike('title', '%gym%')
     .is('deleted_at', null)
     .gte('start_time', since.toISOString())
     .order('start_time', { ascending: true })
@@ -148,7 +151,7 @@ export async function getSleepGymCorrelation(lookbackDays = 90): Promise<Correla
       .select('start_time, end_time')
       .in('category_id', sleepCatIds).is('deleted_at', null).not('end_time', 'is', null).gte('start_time', since),
     supabase.from('time_entries')
-      .select('start_time').eq('title', 'Gym').is('deleted_at', null).gte('start_time', since),
+      .select('start_time').ilike('title', '%gym%').is('deleted_at', null).gte('start_time', since),
   ])
   if (e1) throw e1
   if (e2) throw e2
