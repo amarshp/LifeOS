@@ -70,3 +70,15 @@ test(`overlapsLocalDay includes an entry that starts the day before and ends aft
   assert.equal(overlapsLocalDay(start, end, '2026-05-26'), true)
   assert.equal(overlapsLocalDay(start, end, '2026-05-28'), false)
 })
+
+// Regression (Codex catch): a span ending EXACTLY at local midnight touches
+// the next day at a single instant but contributes zero duration to it —
+// must not be reported as overlapping that next day.
+test(`overlapsLocalDay excludes a span that only touches the next day's midnight [TZ=${TZ}]`, () => {
+  if (new Date().getTimezoneOffset() !== -330) return
+  // 2026-05-26 23:00 IST -> 2026-05-27 00:00 IST (exactly midnight)
+  const start = '2026-05-26T17:30:00Z'
+  const end = '2026-05-26T18:30:00Z'
+  assert.equal(overlapsLocalDay(start, end, '2026-05-26'), true)
+  assert.equal(overlapsLocalDay(start, end, '2026-05-27'), false)
+})

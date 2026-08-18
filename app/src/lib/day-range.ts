@@ -57,7 +57,13 @@ export function overlapsLocalDay(startTimeIso: string, endTimeIso: string | null
   const dayEndMs = new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
   const startMs = new Date(startTimeIso).getTime()
   const endMs = endTimeIso ? new Date(endTimeIso).getTime() : Date.now()
-  return startMs <= dayEndMs && endMs >= dayStartMs
+  // endMs > dayStartMs (strict): a span that ENDS exactly at local midnight
+  // touches the next day at a single instant but contributes zero duration
+  // to it — >= would report that as "overlapping" the next day (Codex
+  // catch). Current callers already clamp to positive duration before using
+  // this, so it was inert in practice, but the primitive itself should be
+  // correct independent of who calls it.
+  return startMs <= dayEndMs && endMs > dayStartMs
 }
 
 /** Keep only items whose [start, end] span overlaps local-calendar `date`. */
