@@ -158,6 +158,12 @@ export function DayListView({ date, entries, running, blocks, categories, now, c
         if (row.kind === 'planned') {
           const cat = categories.find(c => c.id === row.block.category_id)
           const catColor = cat?.color ?? tc.text3
+          // Same cross-midnight markers as entry rows: startMs/endMs are the
+          // block's real times (unclamped), so a block spanning midnight must
+          // say so rather than print a raw "22:00 – 01:00" that reads as
+          // wrong-order or same-day.
+          const startsBefore = row.startMs < dayStartMs
+          const endsAfter = row.endMs > dayEndMs
           return (
             <Pressable
               key={`planned-${row.block.id}`}
@@ -170,7 +176,7 @@ export function DayListView({ date, entries, running, blocks, categories, now, c
                   {row.block.title}
                 </Text>
                 <Text style={[styles.rowSub, { color: tc.text3 }]} numberOfLines={1}>
-                  {cat?.name ? `${cat.name} · ` : ''}Planned · {fmtClock(row.startMs)} – {fmtClock(row.endMs)}
+                  {cat?.name ? `${cat.name} · ` : ''}Planned · {startsBefore ? '‹ ' : ''}{fmtClock(row.startMs)} – {fmtClock(row.endMs)}{endsAfter ? ' ›' : ''}
                 </Text>
               </View>
             </Pressable>
