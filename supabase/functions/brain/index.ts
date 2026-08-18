@@ -566,9 +566,48 @@ Deno.serve(async (req) => {
   let userIds: string[] = []
   let trigger = 'app_open'
 
+  // Rule-violation instant alert: fired synchronously by the time_entries
+  // trigger (check_rule_violations, 20260818_001) the moment a timer starts
+  // past a cutoff (coffee/nap/gym). Bypasses the concern/budget machinery
+  // below — this is a one-off nudge, not a tracked concern — but still
+  // respects quiet hours so it doesn't wake anyone up.
+  let body: { trigger?: string; user_id?: string; message?: string } = {}
+  try {
+    body = await req.clone().json()
+  } catch {
+    /* cron ping has no body worth parsing */
+  }
+
   const presentedCronKey = req.headers.get('x-cron-key')
+  if (presentedCronKey && (!cronKey || presentedCronKey !== cronKey)) return json({ error: 'bad cron key' }, 401)
+
+  if (presentedCronKey && body.trigger === 'rule_violation' && body.user_id && body.message) {
+    const { data: settings } = await admin
+      .from('user_settings')
+      .select('timezone, quiet_hours_start, quiet_hours_end')
+      .eq('user_id', body.user_id)
+      .maybeSingle()
+    const prefs: Prefs = {
+      timezone: settings?.timezone ?? 'Asia/Kolkata',
+      quiet_hours_start: settings?.quiet_hours_start ?? null,
+      quiet_hours_end: settings?.quiet_hours_end ?? null,
+      notif_daily_budget: 0,
+    }
+    if (inQuietHours(localHour(prefs.timezone), prefs)) {
+      return json({ ok: true, trigger: 'rule_violation', sent: false, reason: 'quiet hours' })
+    }
+    const { data: tokenRows } = await admin.from('push_tokens').select('token').eq('user_id', body.user_id)
+    const tokens = (tokenRows ?? []).map((r) => r.token as string)
+    const sent = await sendPush(tokens, 'Heads up', body.message)
+    await admin.from('brain_runs').insert({
+      user_id: body.user_id,
+      trigger: 'rule_violation_received',
+      summary: `pushed=${sent} tokens=${tokens.length}: ${body.message}`,
+    })
+    return json({ ok: true, trigger: 'rule_violation', sent })
+  }
+
   if (presentedCronKey) {
-    if (!cronKey || presentedCronKey !== cronKey) return json({ error: 'bad cron key' }, 401)
     trigger = 'cron'
     // Cron serves users the brain can actually reach while the app is closed.
     const { data } = await admin.from('push_tokens').select('user_id')
