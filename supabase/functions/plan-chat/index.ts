@@ -665,6 +665,15 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
   const strArr = (k: string): string[] =>
     Array.isArray(args[k]) ? (args[k] as unknown[]).filter((v): v is string => typeof v === 'string') : []
 
+  // A call like add_completed_entry/start_timer can trim/split/move/remove
+  // OTHER entries as a side effect (one-reality overlap resolution, atomic
+  // switch) — those only ever got pushed to ctx.actions, which is exposed to
+  // the UI's ✓ chips but was NEVER part of what's returned to the model here.
+  // The model was composing its reply blind to its own side effects and
+  // narrating stale (pre-side-effect) state — a confirmed real failure, not
+  // hypothetical. Capture this call's slice of ctx.actions and hand it back.
+  const actionsBefore = ctx.actions.length
+  const result = await (async (): Promise<unknown> => {
   switch (name) {
     case 'list_time_entries': {
       const date = str('date') ?? today
@@ -1349,6 +1358,13 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     default:
       return { error: `unknown tool ${name}` }
   }
+  })()
+
+  const sideEffects = ctx.actions.slice(actionsBefore)
+  if (sideEffects.length > 0 && result && typeof result === 'object' && !('error' in result)) {
+    return { ...result, db_changes: sideEffects }
+  }
+  return result
 }
 
 // ─── Plan preferences (User Plan Preferences, 2026-08-18) ────────────────────
@@ -1705,6 +1721,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - REPLAN TRADEOFFS: when the day is meaningfully behind, ask at most TWO sharp tradeoff questions before proposing (e.g. protect the gym or recover sleep; shorten deep work or defer a task) — ground them in the EVIDENCE SNAPSHOT and state facts (with their window) separately from your judgment. Then propose. Do not interrogate further.
 - After acting, your reply must state plainly what you changed.
 - NEVER CLAIM AN ACTION YOU DIDN'T TAKE: only say you added/moved/deleted/scheduled something if a tool call for it actually succeeded THIS turn. The exact list of real changes is shown to the user beneath your reply as a verified log — if you describe a change that isn't in it, you are caught lying. If you intend to do something but haven't called the tool yet, call the tool now; don't narrate it as done.
+- READ db_changes, DON'T GUESS AT SIDE EFFECTS: add_completed_entry/start_timer can silently trim, split, move, or delete OTHER entries to resolve an overlap (one-reality: a backfilled/switched period always wins). Every such side effect is returned in that tool result's db_changes array — this is the ONLY place you learn about it; your own memory of what an entry's time range "should" be is not updated automatically and WILL be stale. Before describing the resulting timeline, read db_changes from every tool result this turn and reflect the ACTUAL final times/titles it reports — do not describe an entry using the range you originally set it to if db_changes shows it got trimmed/split/moved afterward. Narrating the pre-side-effect state is exactly how a reply ends up describing two things as overlapping that the database already resolved correctly.
 - Never invent ids: only use entry/block/category ids returned by tools or listed above.
 
 THE propose_plan TOOL:
