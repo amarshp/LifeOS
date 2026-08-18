@@ -1805,7 +1805,6 @@ async function runPlanTurn(
   openaiKey: string,
   onStep: (label: string) => void,
   onTextDelta: (chunk: string) => void,
-  onRoundDiscarded: () => void,
 ): Promise<TurnResult> {
   let reply = ''
   // Rounds 0..MAX_TOOL_ROUNDS-1 get every tool. Round MAX_TOOL_ROUNDS (the
@@ -1820,20 +1819,20 @@ async function runPlanTurn(
     const lastRound = round === MAX_TOOL_ROUNDS
     const finalRound = round === MAX_TOOL_ROUNDS + 1
     onStep('Thinking…')
+    // Buffer this round's text instead of streaming it live: a round that
+    // ends in tool_calls may have streamed a preamble first, and we only
+    // learn finishReason after the round completes. Streaming live and then
+    // discarding on tool_calls made real text visibly appear and vanish
+    // (Amarsh catch, 2026-08-18). Buffering means nothing is shown until we
+    // know it's the terminal round, so there's nothing left to discard.
     const { content, toolCalls, finishReason } = await streamOpenAICompletion(
       convo,
       finalRound ? undefined : lastRound ? REPORTING_TOOLS : TOOLS,
       openaiKey,
-      onTextDelta,
+      () => {},
     )
 
     if (finishReason === 'tool_calls' && toolCalls.length > 0) {
-      // This round's content (if any — models sometimes stream a short preamble
-      // before deciding to call a tool) is NOT the final reply and gets
-      // discarded below. The client already showed it live as it streamed in —
-      // tell it to clear that now, before the next round's real text arrives,
-      // or leftover preamble fragments pile up ahead of the actual answer.
-      if (content) onRoundDiscarded()
       // Re-add the assistant's own tool-call turn so the next round (and the
       // model) sees it, same shape the non-streaming API used to hand back.
       convo.push({
@@ -1864,6 +1863,7 @@ async function runPlanTurn(
     }
 
     reply = content
+    if (content) onTextDelta(content)
     break
   }
 
@@ -2027,7 +2027,6 @@ Deno.serve(async (req) => {
             openaiKey,
             (label) => send('step', { label }),
             (chunk) => send('token', { chunk }),
-            () => send('reset', {}),
           )
           send('done', result)
         } catch (e) {
@@ -2054,7 +2053,7 @@ Deno.serve(async (req) => {
 
   // JSON path (back-compat): run to completion, return the whole payload at once.
   try {
-    const result = await runPlanTurn(ctx, convo, openaiKey, () => {}, () => {}, () => {})
+    const result = await runPlanTurn(ctx, convo, openaiKey, () => {}, () => {})
     return json(result)
   } catch (e) {
     const he = e instanceof HttpError ? e : new HttpError(500, e instanceof Error ? e.message : String(e))
