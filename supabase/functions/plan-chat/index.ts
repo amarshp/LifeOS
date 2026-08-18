@@ -11,7 +11,7 @@
 // Secret:  npx supabase secrets set OPENAI_API_KEY=sk-...
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { computeSleepEvidence, computeWorkoutEvidence, isNapWindow } from '../_shared/wellness-evidence.ts'
+import { computeSleepEvidence, computeWorkoutEvidence, computeDurationEvidence, isNapWindow } from '../_shared/wellness-evidence.ts'
 
 const MODEL = 'gpt-5.1'
 // Reasoning effort for gpt-5.x: 'low' keeps latency inside OPENAI_TIMEOUT_MS
@@ -1322,6 +1322,84 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
   }
 }
 
+// ─── Plan preferences (User Plan Preferences, 2026-08-18) ────────────────────
+
+interface OfficeModeToday {
+  mode: 'office' | 'wfh' | 'holiday' | null
+  holidayName: string | null
+}
+
+/** Latest office_schedule_rules row on/before `dateStr` for that weekday, overridden by a holiday. */
+async function computeOfficeModeToday(
+  supabase: SupabaseClient,
+  userId: string,
+  dateStr: string,
+  weekday: number,
+): Promise<OfficeModeToday> {
+  const [{ data: holiday }, { data: rule }] = await Promise.all([
+    supabase.from('holidays').select('name').eq('user_id', userId).eq('date', dateStr).maybeSingle(),
+    supabase
+      .from('office_schedule_rules')
+      .select('mode')
+      .eq('user_id', userId)
+      .eq('weekday', weekday)
+      .lte('effective_from', dateStr)
+      .order('effective_from', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+  if (holiday) return { mode: 'holiday', holidayName: holiday.name as string }
+  return { mode: (rule?.mode as OfficeModeToday['mode']) ?? null, holidayName: null }
+}
+
+interface PlanPrefsSettings {
+  wake_ideal_time: string | null
+  wake_acceptable_time: string | null
+  wake_lastresort_time: string | null
+  coffee_cutoff_time: string | null
+  melatonin_time: string | null
+  weekend_wake_flex_min: number
+  sunlight_after_wake: boolean
+  nap_cap_min: number
+  nap_cutoff_time: string | null
+  gym_cutoff_time: string | null
+}
+
+const clockLabel = (t: string | null) => (t ? t.slice(0, 5) : null)
+
+/** Formats the day's office mode + wake-tier + sleep-rule preferences as prompt text. */
+function buildPreferencesBlock(settings: PlanPrefsSettings | null, office: OfficeModeToday, dow: string, dateStr: string): string {
+  const lines: string[] = []
+  if (office.mode === 'holiday') lines.push(`Today (${dow} ${dateStr}) is a holiday — ${office.holidayName}. No office commute needed.`)
+  else if (office.mode) lines.push(`Today (${dow} ${dateStr}) is a ${office.mode.toUpperCase()} day per his stated office schedule.`)
+
+  if (!settings) return lines.join('\n') || '(no preferences set)'
+
+  const ideal = clockLabel(settings.wake_ideal_time)
+  const ok = clockLabel(settings.wake_acceptable_time)
+  const last = clockLabel(settings.wake_lastresort_time)
+  if (ideal || ok || last) {
+    lines.push(
+      `Wake-time tiers for office days: IDEAL ${ideal ?? '?'} (on time, no traffic, time for breakfast) — this is the target, not one option among equals. ACCEPTABLE ${ok ?? '?'} (reaches right as breakfast window ends, more traffic — not for regular use). LAST RESORT ${last ?? '?'} (no breakfast, full traffic, late to office) — meant to be RARE; if the evidence snapshot's wake times show he's landing here repeatedly, say so plainly rather than quietly planning around it as normal.`,
+    )
+  }
+
+  const rules: string[] = []
+  const coffee = clockLabel(settings.coffee_cutoff_time)
+  if (coffee) rules.push(`no coffee after ${coffee}`)
+  const mel = clockLabel(settings.melatonin_time)
+  if (mel) rules.push(`melatonin ~${mel}`)
+  rules.push(`consistent wake time, weekends flexed by up to ${settings.weekend_wake_flex_min}min`)
+  if (settings.sunlight_after_wake) rules.push('sunlight after waking')
+  const napCutoff = clockLabel(settings.nap_cutoff_time)
+  rules.push(`naps ≤${settings.nap_cap_min}min${napCutoff ? `, only before ${napCutoff}` : ''}`)
+  const gymCutoff = clockLabel(settings.gym_cutoff_time)
+  if (gymCutoff) rules.push(`gym finished before ${gymCutoff} so there's time to eat and digest before bed`)
+  lines.push(`Sleep rules (his own, stated as complete): ${rules.join('; ')}.`)
+
+  return lines.join('\n')
+}
+
 // ─── Evidence snapshot (deterministic, computed from real data) ──────────────
 
 /**
@@ -1338,7 +1416,7 @@ async function buildEvidenceSnapshot(
   const nowMs = Date.now()
   const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString()
 
-  const [{ data: entries }, sleepEv, workoutEv] = await Promise.all([
+  const [{ data: entries }, sleepEv, workoutEv, durationStats] = await Promise.all([
     supabase
       .from('time_entries')
       .select('category_id, title, start_time, end_time, is_running')
@@ -1347,6 +1425,7 @@ async function buildEvidenceSnapshot(
       .order('start_time'),
     computeSleepEvidence(supabase, userId, tz, catName),
     computeWorkoutEvidence(supabase, userId),
+    computeDurationEvidence(supabase, userId),
   ])
   // Do NOT early-return here even if `entries` is empty — a quiet week (no
   // tracking at all) is exactly when the gym-gap signal from `workoutEv`
@@ -1408,12 +1487,19 @@ async function buildEvidenceSnapshot(
     ? 'Current local time is within the typical post-lunch nap window (13:00-16:00) — if elevated sleep debt supports it, a nap should be ~20min (quick) or ~90min (full cycle), never in between, and not so close to bedtime it cuts into tonight\'s sleep.'
     : null
 
+  // Typical durations (60-day median) — ground propose_plan's block-time
+  // guesses in his own routine instead of generic estimates.
+  const durationLine = durationStats.length
+    ? `Typical durations (last 60 days, median): ${durationStats.map((s) => `${s.label} ~${Math.round(s.medianMin)}min (n=${s.sampleCount})`).join(', ')}.`
+    : null
+
   return [
     `Tracked last 7 days: ${catLine}.`,
     `Sleep: ${sleepLine}`,
     `Workout rotation: ${gymLine}`,
     `Yesterday total tracked: ${h(yesterdayMs)}h. Today so far: ${h(todayMs)}h.`,
     ...(napLine ? [napLine] : []),
+    ...(durationLine ? [durationLine] : []),
   ].join('\n')
 }
 
@@ -1443,6 +1529,7 @@ function buildSystemPrompt(
   memories: Array<{ id: string; kind: string; content: string; pinned: boolean }>,
   yesterdayJournal: string | null,
   currentState: string,
+  preferences: string,
 ): string {
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null
   const catLines = categories.length
@@ -1504,6 +1591,9 @@ ${todoLines}
 CURRENT STATE (most recent tracked entries, newest first — what the user is doing and where they plausibly are RIGHT NOW):
 ${currentState}
 
+PREFERENCES (Amarsh's stated rules — respect these as constraints, not just context, and push back if a request or plan conflicts with one rather than silently complying):
+${preferences}
+
 EVIDENCE SNAPSHOT (deterministic, computed from the user's real tracked data — interpret it, never contradict it, and cite the window when you use it, e.g. "over the last 7 days"):
 ${evidenceSnapshot}
 
@@ -1537,7 +1627,9 @@ HOW TO BEHAVE:
 - BALANCED LIFE, EVIDENCE-DRIVEN: the user has explicitly asked to be nudged when the EVIDENCE SNAPSHOT shows he's overreaching — he knows he gets too aggressive with work and lets sleep/gym slip, and wants you to catch it, not just accommodate it. When the snapshot shows a real signal (elevated sleep debt, a gym gap past its threshold, a nap window with real debt behind it), don't just silently fold it into the schedule — SAY it, plainly, citing the number ("you're ~2h short on sleep over the last week" / "it's been 4 days since a gym session"). If the signal is ambiguous rather than clear (e.g. borderline nap window), ask ONE direct question instead of guessing ("are you feeling sleepy right now, or good to push on?") rather than silently assuming.
 - WHEN SIGNALS STACK, BE BLUNT: if sleep debt, gym gap, and the user's own stated intent all point the same direction (e.g. he wants to "just work" while sleep has been bad AND the gym gap is past threshold), say so directly and recommend the corrective action plainly (e.g. "you're behind on sleep and it's been a while since the gym — I'd take today as a rest/recover day and protect sleep, not push more work") rather than hedging it into a soft suggestion. He has said he wants this — don't soften it into disappearing.
 - SLEEP EVIDENCE IS NOT A REASON TO SKIP THE GYM ON ITS OWN: his own tracked data shows one bad night does not measurably hurt next-day performance — a single rough night is not grounds to suggest skipping the gym. Only SUSTAINED multi-day sleep debt, or the gym gap itself, are grounds for a rest-day suggestion.
-- ALWAYS SHOW YOUR REASONING: whenever the EVIDENCE SNAPSHOT drives a suggestion or directive, say which specific number drove it, not just the conclusion ("legs 5d since last, past its 3-day threshold — that's why legs" not just "let's do legs"). This lets him catch it if the reasoning is wrong.
+- ALWAYS SHOW YOUR REASONING: whenever the EVIDENCE SNAPSHOT or PREFERENCES drives a suggestion, directive, or block placement, say which specific number or rule drove it, not just the conclusion ("legs 5d since last, past its 3-day threshold — that's why legs" not just "let's do legs"; "lunch at 45min, matches your usual" not silence). This is what makes the plan look intentional rather than arbitrary — he should be able to tell WHY each placement is where it is, not just what it is. Keep it to the reasoning that actually mattered for THIS plan, not a footnote on every block.
+- PREFERENCE CONFLICTS — DON'T SILENTLY COMPLY: if a request conflicts with a stated PREFERENCE (scheduling gym after his cutoff, coffee past his cutoff, a nap over his cap or after its cutoff, picking the LAST RESORT wake tier when nothing forces it) or contradicts the day's office/WFH/holiday mode, name the conflict and the rule before proceeding ("that's past your gym cutoff of 21:00 — still want it there, or should I move it earlier?"). Proceed anyway if he confirms — this is a flag, not a block, same as [PROTECTED] blocks above. Don't re-flag something he already just overrode in this same conversation.
+- USE HISTORICAL DURATIONS, NOT GENERIC GUESSES: when the EVIDENCE SNAPSHOT has a typical duration for lunch/commute/getting-ready/walk, use that as the default block length instead of a round-number guess, and say so briefly if it's a meaningfully different guess than he might expect ("commute ~30min based on your recent trips").
 - DIRECT MEASUREMENTS vs BEHAVIORAL CORRELATIONS — treat these differently: a direct count (days since last session, hours slept, sleep debt) is a fact, state it plainly. A correlation about WHICH ACTIVITY CHOICE predicts an outcome (e.g. "sessions tagged X tend to be followed by longer gaps than sessions tagged Y") is a much weaker claim — it is easily confounded by WHY he chose that activity that day (e.g. he reaches for a shorter/different session specifically because he's already busy or short on time — the business causes both the choice and the gap, the choice itself may not). Never state a behavioral correlation as if it were a causal rule ("full-body days cause you to disappear") — at most mention it as a loose pattern worth being aware of, and only when directly relevant, never as the sole grounds for a directive.
 
 GENERAL RESEARCH EVIDENCE (tier 1 — population-level science, kept separate from his own tracked
@@ -1934,7 +2026,12 @@ Deno.serve(async (req) => {
       .eq('status', 'open')
       .is('deleted_at', null)
       .order('priority', { ascending: false }),
-    supabase.from('user_settings').select('allow_parallel_timers').maybeSingle(),
+    supabase
+      .from('user_settings')
+      .select(
+        'allow_parallel_timers, wake_ideal_time, wake_acceptable_time, wake_lastresort_time, coffee_cutoff_time, melatonin_time, weekend_wake_flex_min, sunlight_after_wake, nap_cap_min, nap_cutoff_time, gym_cutoff_time',
+      )
+      .maybeSingle(),
   ])
 
   const cats = (categories ?? []) as Array<{ id: string; name: string; kind: string }>
@@ -1942,7 +2039,8 @@ Deno.serve(async (req) => {
   const allowedTodoIds = new Set(((todos ?? []) as BacklogTodo[]).map((t) => t.id))
 
   const yesterdayStr = addDaysStr(todayLocal(timezone), -1)
-  const [{ data: memories }, { data: yJournal }, { data: recentEntries }, evidenceSnapshot] = await Promise.all([
+  const DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+  const [{ data: memories }, { data: yJournal }, { data: recentEntries }, evidenceSnapshot, officeModeToday] = await Promise.all([
     supabase
       .from('agent_memories')
       .select('id, kind, content, pinned')
@@ -1961,7 +2059,17 @@ Deno.serve(async (req) => {
       .limit(5),
     buildEvidenceSnapshot(supabase, userData.user.id, timezone, (id) => cats.find((c) => c.id === id)?.name ?? null)
       .catch(() => '(snapshot unavailable)'),
+    // Office mode for the day being PLANNED, not necessarily today (e.g. "plan tomorrow").
+    computeOfficeModeToday(supabase, userData.user.id, date, weekdayOf(date)).catch(
+      () => ({ mode: null, holidayName: null }) as OfficeModeToday,
+    ),
   ])
+  const preferences = buildPreferencesBlock(
+    settingsRow as PlanPrefsSettings | null,
+    officeModeToday,
+    DOW_NAMES[weekdayOf(date)],
+    date,
+  )
 
   const currentState = (recentEntries ?? [])
     .map((e) =>
@@ -1983,6 +2091,7 @@ Deno.serve(async (req) => {
     memoryRows,
     yJournal ? `${yJournal.summary}${yJournal.answers ? ` — answers: ${JSON.stringify(yJournal.answers)}` : ''}` : null,
     currentState,
+    preferences,
   )
 
   const ctx: ToolCtx = {

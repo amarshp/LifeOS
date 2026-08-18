@@ -102,6 +102,68 @@ export async function computeSleepEvidence(
   }
 }
 
+// Historical duration grounding for propose_plan's block-time guesses
+// (Amarsh: "look at historic data for lunch/walk/commute/ready time to give
+// realistic guesses" instead of generic estimates). Title-substring matching,
+// same convention as the sleep detection above.
+export interface DurationStat {
+  label: string
+  medianMin: number
+  sampleCount: number
+}
+
+const DURATION_KEYWORDS: Array<{ label: string; keywords: string[] }> = [
+  { label: 'Lunch', keywords: ['lunch'] },
+  { label: 'Commute', keywords: ['commute'] },
+  { label: 'Getting ready', keywords: ['getting ready', 'ready for'] },
+  { label: 'Walk', keywords: ['walk'] },
+]
+
+export async function computeDurationEvidence(
+  supabase: SupabaseClient,
+  userId: string,
+  lookbackDays = 60,
+): Promise<DurationStat[]> {
+  const sinceIso = new Date(Date.now() - lookbackDays * 86_400_000).toISOString()
+  const { data: entries } = await supabase
+    .from('time_entries')
+    .select('title, start_time, end_time')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .not('end_time', 'is', null)
+    .gte('start_time', sinceIso)
+
+  const byLabel = new Map<string, number[]>()
+  for (const e of entries ?? []) {
+    const title = ((e.title as string) ?? '').toLowerCase()
+    const startMs = new Date(e.start_time as string).getTime()
+    const endMs = new Date(e.end_time as string).getTime()
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
+    const durMin = (endMs - startMs) / 60_000
+    // Guard against multi-hour outliers (e.g. a forgotten-running entry
+    // backfilled with a huge span) skewing the median for what's normally a
+    // short routine.
+    if (durMin > 180) continue
+    for (const { label, keywords } of DURATION_KEYWORDS) {
+      if (keywords.some((k) => title.includes(k))) {
+        const arr = byLabel.get(label) ?? []
+        arr.push(durMin)
+        byLabel.set(label, arr)
+      }
+    }
+  }
+
+  // Same 3-sample floor as pulse-insights' attendance check — below that,
+  // a "typical" duration is noise, not signal.
+  const stats: DurationStat[] = []
+  for (const { label } of DURATION_KEYWORDS) {
+    const values = byLabel.get(label) ?? []
+    if (values.length < 3) continue
+    stats.push({ label, medianMin: medianMinutes(values), sampleCount: values.length })
+  }
+  return stats
+}
+
 export interface WorkoutTypeStat {
   type: string
   days: number
