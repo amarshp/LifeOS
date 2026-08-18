@@ -53,6 +53,41 @@ export async function getRunningTimers(): Promise<TimeEntry[]> {
   return data
 }
 
+// A correction that mislabels a running entry (e.g. the agent starts the wrong
+// activity, then has to delete it and start_timer a new one for what was
+// actually happening — update_time_entry can only ever CLOSE an entry, never
+// reopen one) always creates a new row/id, which resets any elapsed-time
+// display keyed to entry.start_time even though the real activity was
+// continuous. Chase back through same-title/category predecessors that end
+// within SESSION_GAP_MS of this entry's start to recover the true session
+// start. The window is sized to the delete+start_timer round-trip (observed
+// ~30s on a real correction), not general break-bridging — a real pause,
+// however short, should still reset the count.
+const SESSION_GAP_MS = 90_000
+const MAX_SESSION_HOPS = 20
+
+export async function getSessionStart(entry: TimeEntry): Promise<string> {
+  let cursorStart = entry.start_time
+  for (let i = 0; i < MAX_SESSION_HOPS; i++) {
+    const cursorMs = new Date(cursorStart).getTime()
+    const { data: prev } = await supabase
+      .from('time_entries')
+      .select('start_time')
+      .eq('title', entry.title)
+      .eq('category_id', entry.category_id)
+      .is('deleted_at', null)
+      .not('end_time', 'is', null)
+      .lte('end_time', cursorStart)
+      .gte('end_time', new Date(cursorMs - SESSION_GAP_MS).toISOString())
+      .order('end_time', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!prev) break
+    cursorStart = (prev as { start_time: string }).start_time
+  }
+  return cursorStart
+}
+
 export async function getEntriesForDate(date: string): Promise<TimeEntry[]> {
   // Query a ±1-day-padded naive window, then bucket by LOCAL calendar day.
   // A naive same-day timestamptz window is offset from the user's real local

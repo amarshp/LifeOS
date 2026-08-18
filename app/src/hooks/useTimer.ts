@@ -7,13 +7,15 @@ interface TimerState {
   running: TimeEntry[]
   loading: boolean
   elapsed: Record<string, number>
+  sessionStart: Record<string, string>
 }
 
-function getElapsed(running: TimeEntry[]): Record<string, number> {
+function getElapsed(running: TimeEntry[], sessionStart: Record<string, string>): Record<string, number> {
   const now = Date.now()
   const elapsed: Record<string, number> = {}
   for (const entry of running) {
-    elapsed[entry.id] = Math.max(0, Math.floor((now - new Date(entry.start_time).getTime()) / 1000))
+    const start = sessionStart[entry.id] ?? entry.start_time
+    elapsed[entry.id] = Math.max(0, Math.floor((now - new Date(start).getTime()) / 1000))
   }
   return elapsed
 }
@@ -23,12 +25,16 @@ export function useTimer() {
     running: [],
     loading: true,
     elapsed: {},
+    sessionStart: {},
   })
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refresh = useCallback(async () => {
     const running = await timeEntries.getRunningTimers()
-    setState(prev => ({ ...prev, running, elapsed: getElapsed(running), loading: false }))
+    const starts = await Promise.all(running.map((e) => timeEntries.getSessionStart(e)))
+    const sessionStart: Record<string, string> = {}
+    running.forEach((e, i) => { sessionStart[e.id] = starts[i] })
+    setState(prev => ({ ...prev, running, sessionStart, elapsed: getElapsed(running, sessionStart), loading: false }))
   }, [])
 
   useEffect(() => {
@@ -48,7 +54,7 @@ export function useTimer() {
     }
 
     intervalRef.current = setInterval(() => {
-      setState(prev => ({ ...prev, elapsed: getElapsed(state.running) }))
+      setState(prev => ({ ...prev, elapsed: getElapsed(state.running, state.sessionStart) }))
     }, 1000)
 
     return () => {
@@ -108,6 +114,7 @@ export function useTimer() {
   return {
     running: state.running,
     elapsed: state.elapsed,
+    sessionStart: state.sessionStart,
     loading: state.loading,
     start,
     startParallel,

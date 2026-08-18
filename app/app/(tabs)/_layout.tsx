@@ -103,9 +103,9 @@ export default function TabLayout() {
   // Single instance: this tab root mounts once.
   useEffect(() => {
     initLiveActivityTracking() // learn push-started card ids so stops can end them
-    reconcileLiveActivities(timer.running, nextPlanned).catch(() => {})
+    reconcileLiveActivities(timer.running, nextPlanned, timer.sessionStart).catch(() => {})
     reconcileRunawayNotifications(timer.running).catch(() => {})
-  }, [timer.running, nextPlanned])
+  }, [timer.running, nextPlanned, timer.sessionStart])
 
   // Apply queued Siri "track" commands whenever the app returns to foreground
   // (a Siri command runs while the app is backgrounded).
