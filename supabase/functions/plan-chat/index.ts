@@ -158,6 +158,16 @@ const TIME_ARG_NOTE =
 const TAGS_ARG_NOTE =
   'Lowercase tags, mirroring how manually-logged entries are tagged. For a GYM session specifically, always include "gym" as a tag (plus a workout-type tag if named — one of push/pull/legs/upper/lower/full-body/boxing/run/hyrox/rest, never a synonym) even if the title is more descriptive. This is what lets Pulse and the gym-gap nudge recognize the session.'
 
+// A planned block's title and its later tracked entry get shown side by side
+// (Home "next", Insights Plan Drift) with no link required to be recognized as
+// the same thing — so if the model titles the plan "Office work – focused
+// block" but the user just types "Work" when they actually do it, a fully
+// honoured plan visually reads as missed/off-plan even though the underlying
+// match (by category + time overlap) is correct. Keep titles as plain as the
+// user's own words.
+const TITLE_ARG_NOTE =
+  'Keep the title close to the user\'s own words for the activity — do not invent a fuller or more formal-sounding phrasing ("work" → "Work", not "Office work – focused block"; "gym" → "Gym", not an invented workout description). A vague one-word activity stays vague; add detail only when the user\'s own words already carried it, or via the tags field where instructed — never by padding the title with words the user never said.'
+
 const TOOLS = [
   {
     type: 'function',
@@ -194,7 +204,7 @@ const TOOLS = [
     function: {
       name: 'start_timer',
       description:
-        `Start a new RUNNING timer for the user's current activity. Any previously running timer is stopped automatically at the new start time (atomic switch). Optional backdated start. category_id must be a real category id. ${TIME_ARG_NOTE}`,
+        `Start a new RUNNING timer for the user's current activity. Any previously running timer is stopped automatically at the new start time (atomic switch). Optional backdated start. category_id must be a real category id. ${TIME_ARG_NOTE} ${TITLE_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: {
@@ -214,7 +224,7 @@ const TOOLS = [
     function: {
       name: 'add_completed_entry',
       description:
-        `Insert a finished time entry (backfill a period the user forgot to track). ${TIME_ARG_NOTE} Date defaults to today for both ends; end after start.`,
+        `Insert a finished time entry (backfill a period the user forgot to track). ${TIME_ARG_NOTE} Date defaults to today for both ends; end after start. ${TITLE_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: {
@@ -280,7 +290,7 @@ const TOOLS = [
     function: {
       name: 'add_calendar_block',
       description:
-        `Add ONE schedule block directly (for quick edits: "add a dentist visit at 4"). For building/refining a WHOLE day plan, call propose_plan instead. ${TIME_ARG_NOTE}`,
+        `Add ONE schedule block directly (for quick edits: "add a dentist visit at 4"). For building/refining a WHOLE day plan, call propose_plan instead. ${TIME_ARG_NOTE} ${TITLE_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: {
@@ -1700,7 +1710,8 @@ THE propose_plan TOOL:
 - Call propose_plan whenever you have a concrete, useful schedule to show — the first draft AND every later refinement. Do NOT call it on a turn where you're just chatting or answering a question with no schedule change: the plan you last proposed stays on screen exactly as it was until you call propose_plan again. If the user asks to scrap the plan entirely, call clear_plan instead.
 - Every item needs start_time and end_time as 24-hour "HH:MM" local clock times.
 - Set category_id to the matching category's id from the list above, or null if nothing fits. Never invent an id.
-- Set todo_id whenever an item schedules one of the backlog tasks (including tasks you just added with add_todo) — that links the block to the task so doing it completes the task. When todo_id is set, the item's title MUST be the task's own title verbatim — never rephrase or elaborate it. Plan-vs-actual and the home screen show this title next to what the user actually tracked, so a reworded title makes a completed task look unmet even when it isn't.
+- Set todo_id whenever an item schedules one of the backlog tasks (including tasks you just added with add_todo) — that links the block to the task so doing it completes the task. When todo_id is set, the item's title MUST be the task's own title verbatim — never rephrase or elaborate it.
+- ${TITLE_ARG_NOTE}
 - Cover the meaningful parts of the day in order. Items must not overlap UNLESS the user explicitly wants things in parallel.
 - PARALLEL ITEMS: when the user says things run in parallel / at the same time / while doing X, keep BOTH items at their full stated times even though they overlap (e.g. "study 7:30–10, calls 7:30–8 and 8–8:30 in parallel" → Study 19:30–22:00 PLUS Call 1 19:30–20:00 PLUS Call 2 20:00–20:30). Never shrink, split, or shift an item to avoid an overlap the user asked for. At most 2 items may run at any moment.
 - SLEEP: the user's nightly sleep target is ${expectedSleepHours} hours. When they mention a bedtime (e.g. "I'll sleep at 11:15 PM"), add a Sleep item starting then and lasting the full ${expectedSleepHours} hours — the end_time will be an early-morning time smaller than the start_time (e.g. 23:15 → 07:45). That is the ONLY item allowed to cross midnight; never cut sleep short at midnight.
