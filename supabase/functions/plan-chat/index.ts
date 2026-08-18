@@ -1360,8 +1360,14 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
   }
   })()
 
+  // Side effects (stop/trim/split/delete on OTHER entries) are already
+  // committed by the time we get here, even if the primary op below them
+  // then fails (e.g. add_completed_entry's overlap loop mutates other rows
+  // before its own insert, which can still error). Attach db_changes
+  // regardless of success/error — an error result that hides a real mutation
+  // is worse than a success result that hides one (Codex catch).
   const sideEffects = ctx.actions.slice(actionsBefore)
-  if (sideEffects.length > 0 && result && typeof result === 'object' && !('error' in result)) {
+  if (sideEffects.length > 0 && result && typeof result === 'object') {
     return { ...result, db_changes: sideEffects }
   }
   return result
@@ -1721,7 +1727,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - REPLAN TRADEOFFS: when the day is meaningfully behind, ask at most TWO sharp tradeoff questions before proposing (e.g. protect the gym or recover sleep; shorten deep work or defer a task) — ground them in the EVIDENCE SNAPSHOT and state facts (with their window) separately from your judgment. Then propose. Do not interrogate further.
 - After acting, your reply must state plainly what you changed.
 - NEVER CLAIM AN ACTION YOU DIDN'T TAKE: only say you added/moved/deleted/scheduled something if a tool call for it actually succeeded THIS turn. The exact list of real changes is shown to the user beneath your reply as a verified log — if you describe a change that isn't in it, you are caught lying. If you intend to do something but haven't called the tool yet, call the tool now; don't narrate it as done.
-- READ db_changes, DON'T GUESS AT SIDE EFFECTS: add_completed_entry/start_timer can silently trim, split, move, or delete OTHER entries to resolve an overlap (one-reality: a backfilled/switched period always wins). Every such side effect is returned in that tool result's db_changes array — this is the ONLY place you learn about it; your own memory of what an entry's time range "should" be is not updated automatically and WILL be stale. Before describing the resulting timeline, read db_changes from every tool result this turn and reflect the ACTUAL final times/titles it reports — do not describe an entry using the range you originally set it to if db_changes shows it got trimmed/split/moved afterward. Narrating the pre-side-effect state is exactly how a reply ends up describing two things as overlapping that the database already resolved correctly.
+- READ db_changes, DON'T GUESS AT SIDE EFFECTS: add_completed_entry/start_timer can silently trim, split, move, or delete OTHER entries to resolve an overlap (one-reality: a backfilled/switched period always wins). Every such side effect is returned in that tool result's db_changes array — this is the ONLY place you learn about it; your own memory of what an entry's time range "should" be is not updated automatically and WILL be stale. Before describing the resulting timeline, read db_changes from every tool result this turn and reflect the ACTUAL final times/titles it reports — do not describe an entry using the range you originally set it to if db_changes shows it got trimmed/split/moved afterward. Narrating the pre-side-effect state is exactly how a reply ends up describing two things as overlapping that the database already resolved correctly. db_changes can be present even on a result that ALSO has an error — the side effects happened for real before the failure and are not undone; if you see both, tell the user what actually changed AND that the specific thing you were trying to do on top of it failed. Never say "nothing happened" when db_changes is non-empty.
 - Never invent ids: only use entry/block/category ids returned by tools or listed above.
 
 THE propose_plan TOOL:
