@@ -16,7 +16,7 @@ import { tickBrain } from '../../src/services/brain'
 import { syncQuickTasks, drainTrackQueue } from '../../src/lib/siriQueue'
 import { ensureVoiceCredential } from '../../src/lib/voiceCredential'
 import { registerPushToStartToken } from '../../src/lib/pushToStartToken'
-import { emitTimerChange } from '../../src/lib/timer-events'
+import { emitTimerChange, subscribeTimerChange } from '../../src/lib/timer-events'
 import { todayStr } from '../../src/lib/date'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Category } from '../../src/types/database'
@@ -49,6 +49,25 @@ export default function TabLayout() {
     }
   }, [timer.refresh])
 
+  // Extracted so it can also run off the timer-events bus (see below) — not
+  // just on screen focus. Without that, an agent-added/changed plan block
+  // (propose_plan Apply, quick add_calendar_block, undo) never updated the
+  // Live Activity's "Next: …" subtitle until the app was restarted, because
+  // this was the ONLY place that recomputed it, and it only ran on focus.
+  const refreshNextPlanned = useCallback(() => {
+    calendarBlocksService.getEffectiveBlocksForDate(todayStr())
+      .then((blocks) => {
+        const nowMs = Date.now()
+        const next = blocks
+          .filter((b) => new Date(b.start_time).getTime() > nowMs)
+          .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
+        setNextPlanned(next ? { title: next.title, startMs: new Date(next.start_time).getTime() } : null)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => subscribeTimerChange(refreshNextPlanned), [refreshNextPlanned])
+
   useFocusEffect(useCallback(() => {
     Promise.all([
       categoriesService.getCategories(),
@@ -59,15 +78,7 @@ export default function TabLayout() {
         syncQuickTasks(cats, recent) // give Siri the task names to match
       })
       .catch(() => {})
-    calendarBlocksService.getEffectiveBlocksForDate(todayStr())
-      .then((blocks) => {
-        const nowMs = Date.now()
-        const next = blocks
-          .filter((b) => new Date(b.start_time).getTime() > nowMs)
-          .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
-        setNextPlanned(next ? { title: next.title, startMs: new Date(next.start_time).getTime() } : null)
-      })
-      .catch(() => {})
+    refreshNextPlanned()
     // Ensure the device has a voice credential so Siri/Shortcut can write to
     // Supabase directly while the app is closed.
     // After the credential exists, register the APNs push-to-start token so the
@@ -82,7 +93,7 @@ export default function TabLayout() {
     // Nudge the brain — throttled inside; cron covers app-closed time.
     void tickBrain()
     timer.refresh()
-  }, [timer.refresh, drainAndReport]))
+  }, [timer.refresh, drainAndReport, refreshNextPlanned]))
 
   const currentEntry = timer.running[0]
   const currentCat = currentEntry ? categories.find(c => c.id === currentEntry.category_id) : undefined

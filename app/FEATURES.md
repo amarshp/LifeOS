@@ -216,6 +216,7 @@
 - Parallel timers (max 2) each get their own activity
 - Library SwiftUI customized via a config plugin (`plugins/withLiveActivityStopButton.js`) that injects the button/dot at prebuild (reliable on EAS, unlike postinstall)
 - iOS 16.2+ only; no-op on Android/web
+- Fixed: the "Next: …" subtitle went stale after any agent action that changed the plan (propose_plan Apply, quick add_calendar_block, undo) and stayed stale until the app was force-restarted. Root cause: `_layout.tsx`'s `nextPlanned` state was only recomputed inside its own `useFocusEffect` (screen focus), never wired to the `emitTimerChange`/`subscribeTimerChange` bus that every agent mutation already fires — unlike the running-timer part of the card, which was correctly wired and updated fine. Now `nextPlanned` also refreshes off that same bus, same signal as everything else.
 
 ## Siri / Voice (iOS)
 - One-shot: "LifeOS \<title>" captures the whole tail as the entry title (e.g. "LifeOS commute to office"); "LifeOS stop \<title>" / "LifeOS parallel \<title>" route by leading keyword — best for short, non-navigation-like words (Apple's NL router hijacks map/web/message-like phrases)
