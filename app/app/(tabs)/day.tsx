@@ -1099,11 +1099,13 @@ export default function DayScreen() {
           date={dateStr}
           entries={entries}
           running={timer.running}
+          blocks={visibleBlocks}
           categories={categories}
           now={now}
           colors={tc}
           onEntryPress={setEditingEntry}
           onGapPress={openGapFill}
+          onBlockPress={setEditingBlock}
         />
       ) : (
       <GestureDetector gesture={pinchGesture}>

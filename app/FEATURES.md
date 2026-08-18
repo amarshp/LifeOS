@@ -130,6 +130,7 @@
 - Hide sleep: toggle in Settings collapses the sleep window (configurable bedtime / wake time, default 11 PM–7 AM) out of the timeline so only waking hours are shown; per-hour pixel density stays constant
 - A Day/Week toggle was tried and parked (2026-07-04, UX didn't land) — Week's grid still exists as `src/components/WeekTimeline.tsx` but isn't wired into any screen right now
 - **Faster load**: block-fetching switched from one `getEffectiveBlocksForDate` round-trip pair per date in the window (up to 12 requests, including redundantly refetching the whole recurring-blocks table on every date) to the existing `getBlocksInRange` batched query (2 requests for the whole window) — same function Insights already used for its Week/Month view. Main source of the multi-second blank load on this screen.
+- List mode (the Timeline ↔ List toggle) now also shows planned/scheduled blocks, not just tracked entries — same upcoming/in-progress set Timeline mode already renders (`getVisiblePlannedBlocks`), styled distinctly (hollow dot, left border in category color, "Planned" label) and tappable to edit like Timeline's blocks. Previously this view never received blocks at all.
 
 ## Insights View
 - 5th tab (Home / Day / Agent / Tasks / Insights / Settings) with a bar-chart icon

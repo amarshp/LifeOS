@@ -73,7 +73,7 @@ function fmtDuration(ms: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
 
-export function DayListView({ date, entries, running, categories, now, colors: tc, onEntryPress, onGapPress }: DayListViewProps) {
+export function DayListView({ date, entries, running, blocks, categories, now, colors: tc, onEntryPress, onGapPress, onBlockPress }: DayListViewProps) {
   const rows = useMemo<Row[]>(() => {
     const dayStart = dayStartLocal(date).getTime()
     const dayEnd = dayStart + 24 * 3600_000
@@ -110,8 +110,20 @@ export function DayListView({ date, entries, running, categories, now, colors: t
       if (tailEnd - lastEnd >= GAP_MIN_MS) gapRows.push({ kind: 'gap', startMs: lastEnd, endMs: tailEnd })
     }
 
-    return [...entryRows, ...gapRows].sort((a, b) => a.startMs - b.startMs)
-  }, [date, entries, running, now])
+    // Planned blocks: caller already filtered to upcoming/in-progress-only
+    // (getVisiblePlannedBlocks) and clipped an in-progress block's start to
+    // "now" — just clamp to this day's window like entries are.
+    const plannedRows: PlannedRow[] = []
+    for (const b of blocks) {
+      const startMs = new Date(b.start_time).getTime()
+      const endMs = new Date(b.end_time).getTime()
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue
+      if (endMs <= dayStart || startMs >= dayEnd) continue
+      plannedRows.push({ kind: 'planned', block: b, startMs, endMs })
+    }
+
+    return [...entryRows, ...gapRows, ...plannedRows].sort((a, b) => a.startMs - b.startMs)
+  }, [date, entries, running, blocks, now])
 
   if (rows.length === 0) {
     return (
@@ -140,6 +152,27 @@ export function DayListView({ date, entries, running, categories, now, colors: t
               <Text style={[styles.gapTimes, { color: tc.text4 }]}>
                 {fmtClock(row.startMs)} – {fmtClock(row.endMs)}
               </Text>
+            </Pressable>
+          )
+        }
+        if (row.kind === 'planned') {
+          const cat = categories.find(c => c.id === row.block.category_id)
+          const catColor = cat?.color ?? tc.text3
+          return (
+            <Pressable
+              key={`planned-${row.block.id}`}
+              style={[styles.row, styles.plannedRow, { borderBottomColor: tc.border, borderLeftColor: catColor }]}
+              onPress={() => onBlockPress(row.block)}
+            >
+              <View style={[styles.dot, styles.hollowDot, { borderColor: catColor }]} />
+              <View style={styles.rowMain}>
+                <Text style={[styles.rowTitle, { color: tc.text2 }]} numberOfLines={1}>
+                  {row.block.title}
+                </Text>
+                <Text style={[styles.rowSub, { color: tc.text3 }]} numberOfLines={1}>
+                  {cat?.name ? `${cat.name} · ` : ''}Planned · {fmtClock(row.startMs)} – {fmtClock(row.endMs)}
+                </Text>
+              </View>
             </Pressable>
           )
         }
@@ -186,6 +219,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  hollowDot: { backgroundColor: 'transparent', borderWidth: 2 },
+  plannedRow: { borderLeftWidth: 3, paddingLeft: 9, opacity: 0.75 },
   rowMain: { flex: 1, minWidth: 0, gap: 2 },
   rowTitle: {
     fontSize: 15,
