@@ -146,8 +146,13 @@ async function detectConcerns(
   // here, so `categories` needs to already be a settled value, not a promise
   // still in flight (a same-Promise.all attempt at this deadlocks/TDZ-errors).
   const catName = (id: string | null) => (categories ?? []).find((c) => c.id === id)?.name ?? null
+  const { data: wakeSettings } = await db
+    .from('user_settings')
+    .select('wake_ideal_time, wake_lastresort_time')
+    .eq('user_id', userId)
+    .maybeSingle()
   const [sleepEv, workoutEv] = await Promise.all([
-    computeSleepEvidence(db, userId, tz, catName),
+    computeSleepEvidence(db, userId, tz, catName, undefined, wakeSettings?.wake_ideal_time ?? null),
     computeWorkoutEvidence(db, userId),
   ])
 
@@ -159,11 +164,6 @@ async function detectConcerns(
   // norm, that's worth surfacing rather than quietly planning around it.
   // Same undated/self-clearing shape as gym-gap: streak-based, clears itself
   // once a better wake breaks it.
-  const { data: wakeSettings } = await db
-    .from('user_settings')
-    .select('wake_lastresort_time')
-    .eq('user_id', userId)
-    .maybeSingle()
   const lastResortTime = wakeSettings?.wake_lastresort_time as string | null
   if (lastResortTime && sleepEv.wakeByDate.length) {
     const [rh, rm] = lastResortTime.slice(0, 5).split(':').map(Number)

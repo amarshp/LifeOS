@@ -1435,6 +1435,7 @@ async function buildEvidenceSnapshot(
   userId: string,
   tz: string,
   catName: (id: string | null) => string | null,
+  idealWakeTime: string | null,
 ): Promise<string> {
   const nowMs = Date.now()
   const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString()
@@ -1446,7 +1447,7 @@ async function buildEvidenceSnapshot(
       .is('deleted_at', null)
       .gte('start_time', sinceIso)
       .order('start_time'),
-    computeSleepEvidence(supabase, userId, tz, catName),
+    computeSleepEvidence(supabase, userId, tz, catName, undefined, idealWakeTime),
     computeWorkoutEvidence(supabase, userId),
     computeDurationEvidence(supabase, userId),
   ])
@@ -2083,8 +2084,13 @@ Deno.serve(async (req) => {
       .is('deleted_at', null)
       .order('start_time', { ascending: false })
       .limit(5),
-    buildEvidenceSnapshot(supabase, userData.user.id, timezone, (id) => cats.find((c) => c.id === id)?.name ?? null)
-      .catch(() => '(snapshot unavailable)'),
+    buildEvidenceSnapshot(
+      supabase,
+      userData.user.id,
+      timezone,
+      (id) => cats.find((c) => c.id === id)?.name ?? null,
+      (settingsRow as PlanPrefsSettings | null)?.wake_ideal_time ?? null,
+    ).catch(() => '(snapshot unavailable)'),
     // Office mode for the day being PLANNED, not necessarily today (e.g. "plan tomorrow").
     computeOfficeModeToday(supabase, userData.user.id, date, weekdayOf(date)).catch(
       () => ({ mode: null, holidayName: null }) as OfficeModeToday,

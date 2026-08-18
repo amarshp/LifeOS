@@ -68,6 +68,11 @@ export function minutesToClock(mins: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 
+function parseClockMinutes(clock: string): number {
+  const [hh, mm] = clock.slice(0, 5).split(':').map(Number)
+  return hh * 60 + mm
+}
+
 export interface SleepEvidence {
   nightsLogged: number
   avgH: number | null
@@ -78,13 +83,20 @@ export interface SleepEvidence {
   wakeByDate: Array<{ date: string; wakeMin: number }> // per-night wake time, most recent last
 }
 
-/** `catName` maps a category_id to its display name (caller already has the list loaded). */
+/**
+ * `catName` maps a category_id to its display name (caller already has the list loaded).
+ * `idealWakeTime` (user_settings.wake_ideal_time, "HH:MM:SS") anchors recBedClock to the
+ * user's own stated wake goal instead of the recent (possibly already-drifted-late) median
+ * wake time — a bedtime target shouldn't chase wherever sleep has drifted to. Falls back to
+ * the median-wake anchor when no ideal wake time is set.
+ */
 export async function computeSleepEvidence(
   supabase: SupabaseClient,
   userId: string,
   tz: string,
   catName: (id: string | null) => string | null,
   lookbackDays = 7,
+  idealWakeTime: string | null = null,
 ): Promise<SleepEvidence> {
   const nowMs = Date.now()
   const sinceIso = new Date(nowMs - lookbackDays * 86_400_000).toISOString()
@@ -122,13 +134,14 @@ export async function computeSleepEvidence(
   const targetH = Math.min(9, Math.max(7, avgH))
   const debtH = nights.reduce((sum, ms) => sum + (targetH - ms / 3_600_000), 0)
   const medWake = medianMinutes(wakeByDate.map((w) => w.wakeMin))
+  const bedAnchorMin = idealWakeTime ? parseClockMinutes(idealWakeTime) : medWake
   return {
     nightsLogged: nights.length,
     avgH,
     targetH,
     debtH,
     recWakeClock: minutesToClock(medWake),
-    recBedClock: minutesToClock(medWake - targetH * 60),
+    recBedClock: minutesToClock(bedAnchorMin - targetH * 60),
     wakeByDate,
   }
 }
