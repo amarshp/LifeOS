@@ -1621,7 +1621,7 @@ THE propose_plan TOOL:
 - Cover the meaningful parts of the day in order. Items must not overlap UNLESS the user explicitly wants things in parallel.
 - PARALLEL ITEMS: when the user says things run in parallel / at the same time / while doing X, keep BOTH items at their full stated times even though they overlap (e.g. "study 7:30–10, calls 7:30–8 and 8–8:30 in parallel" → Study 19:30–22:00 PLUS Call 1 19:30–20:00 PLUS Call 2 20:00–20:30). Never shrink, split, or shift an item to avoid an overlap the user asked for. At most 2 items may run at any moment.
 - SLEEP: the user's nightly sleep target is ${expectedSleepHours} hours. When they mention a bedtime (e.g. "I'll sleep at 11:15 PM"), add a Sleep item starting then and lasting the full ${expectedSleepHours} hours — the end_time will be an early-morning time smaller than the start_time (e.g. 23:15 → 07:45). That is the ONLY item allowed to cross midnight; never cut sleep short at midnight.
-- After calling propose_plan, your reply should briefly summarize the plan and ask if they want changes. Keep replying in plain conversational text — never describe the schedule as JSON or mention the tool by name.`
+- After calling propose_plan, do NOT re-list the schedule item by item with times — the Apply card already shows every block, so restating it is pure duplication. Reply in 1-3 short sentences: what's new or changed since the last plan, plus one open question if you have one. If nothing meaningfully changed from the prior plan, a single sentence is enough. Keep it plain conversational text — never describe the schedule as JSON or mention the tool by name.`
 }
 
 // ─── Turn runner (shared by JSON and streaming paths) ───────────────────────
