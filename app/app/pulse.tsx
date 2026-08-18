@@ -21,6 +21,31 @@ function weekLabel(monday: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function ago(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  return `${days}d ago`
+}
+
+// The same nudge (e.g. "No plan for today yet") resolving the same way on
+// repeated mornings produced 4-5 visually-identical rows with nothing to
+// distinguish them — collapsed into one row with a count and the most
+// recent date, since the repetition itself ("this keeps happening") is the
+// only real information in that case.
+function collapseOutcomes(outcomes: NudgeOutcome[]): Array<NudgeOutcome & { count: number }> {
+  const out: Array<NudgeOutcome & { count: number }> = []
+  for (const o of outcomes) {
+    const prev = out[out.length - 1]
+    if (prev && prev.title === o.title && prev.resolution === o.resolution) {
+      prev.count += 1
+      continue
+    }
+    out.push({ ...o, count: 1 })
+  }
+  return out
+}
+
 export default function PulseScreen() {
   const router = useRouter()
   const { colors: tc } = useSettings()
@@ -141,10 +166,15 @@ export default function PulseScreen() {
         {showOutcomes && (
           <View style={[styles.card, { borderColor: tc.border2 }]}>
             <Text style={[styles.cardLabel, { color: tc.text3 }]}>DID IT WORK</Text>
-            {outcomes.map(o => (
+            <Text style={[styles.cardSub, { color: tc.text3, marginTop: 2, marginBottom: 4 }]}>
+              Nudges that actually pushed to your phone, and what happened after.
+            </Text>
+            {collapseOutcomes(outcomes).map(o => (
               <View key={o.id} style={styles.outcomeRow}>
-                <Text style={[styles.outcomeTitle, { color: tc.text1 }]} numberOfLines={1}>{o.title}</Text>
-                <Text style={[styles.outcomeText, { color: tc.text3 }]}>{o.resolution}</Text>
+                <Text style={[styles.outcomeTitle, { color: tc.text1 }]} numberOfLines={1}>
+                  {o.title}{o.count > 1 ? ` (×${o.count})` : ''}
+                </Text>
+                <Text style={[styles.outcomeText, { color: tc.text3 }]}>{o.resolution} · {ago(o.updated_at)}</Text>
               </View>
             ))}
           </View>

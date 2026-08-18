@@ -214,16 +214,21 @@ export interface WorkoutEvidence {
  */
 export async function computeWorkoutEvidence(supabase: SupabaseClient, userId: string): Promise<WorkoutEvidence> {
   const nowMs = Date.now()
-  // Substring match, not exact "Gym" — agent-logged sessions carry a
-  // descriptive title (e.g. "Gym – upper body (push + pull)"), and there's
-  // no dedicated Gym category on the real account (workouts land under the
-  // generic "Activity" category), so title is the only reliable signal.
+  // Title prefix ("Gym…") OR a "gym" tag — not a bare substring. A bare
+  // "%gym%" match was tried and shipped first, then found live-wrong: it
+  // also matched "Getting ready for gym" and "Commute to gym" (real
+  // prep/commute entries that mention gym without being a session),
+  // inflating the count. The "gym" tag is the more reliable long-term
+  // signal (manually-logged entries carry it consistently; an agent-created
+  // entry with a descriptive title and no tag is exactly what caused this
+  // bug — start_timer/add_completed_entry now accept a tags arg so the
+  // agent can set it). Title prefix stays as a fallback for older entries.
   const { data: gymEntries } = await supabase
     .from('time_entries')
     .select('tags, start_time')
     .eq('user_id', userId)
     .is('deleted_at', null)
-    .ilike('title', '%gym%')
+    .or('title.ilike.gym*,tags.cs.{gym}')
     .order('start_time', { ascending: false })
     .limit(60)
   if (!gymEntries || gymEntries.length === 0) {

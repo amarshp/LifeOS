@@ -21,16 +21,24 @@ function mondayOf(d: Date): string {
 /** Gym sessions per week, oldest first — the trend card's data. Includes
  * zero-count weeks (a gap must render as a gap, not silently vanish from the
  * series and read as continuous with whatever week comes next — Codex catch).
- * Substring title match (not exact "Gym"): agent-logged sessions carry a
- * descriptive title ("Gym – upper body..."), matches wellness-evidence.ts's
- * computeWorkoutEvidence so client/server agree on what counts as a session. */
+ * Matches on title prefix ("Gym…") OR a "gym" tag, matches
+ * wellness-evidence.ts's computeWorkoutEvidence so client/server agree on
+ * what counts as a session. A bare substring match ("%gym%") was tried first
+ * and shipped, then found live-wrong: it also matched "Getting ready for
+ * gym" and "Commute to gym" — real activities that MENTION gym without BEING
+ * a session — inflating the count (confirmed: real data showed 3 "sessions"
+ * this week when only 1 actual session existed). The "gym" tag is the more
+ * reliable signal long-term (manually-logged entries carry it consistently;
+ * title alone breaks the moment an agent-created entry uses a descriptive
+ * title with no tag, which is exactly what caused this bug) — title prefix
+ * stays as a fallback for entries that predate the tag convention. */
 export async function getGymFrequencyTrend(days: number): Promise<WeekBucket[]> {
   const now = new Date()
   const since = new Date(now.getTime() - days * 86_400_000)
   const { data, error } = await supabase
     .from('time_entries')
     .select('start_time')
-    .ilike('title', '%gym%')
+    .or('title.ilike.gym*,tags.cs.{gym}')
     .is('deleted_at', null)
     .gte('start_time', since.toISOString())
     .order('start_time', { ascending: true })
@@ -151,7 +159,7 @@ export async function getSleepGymCorrelation(lookbackDays = 90): Promise<Correla
       .select('start_time, end_time')
       .in('category_id', sleepCatIds).is('deleted_at', null).not('end_time', 'is', null).gte('start_time', since),
     supabase.from('time_entries')
-      .select('start_time').ilike('title', '%gym%').is('deleted_at', null).gte('start_time', since),
+      .select('start_time').or('title.ilike.gym*,tags.cs.{gym}').is('deleted_at', null).gte('start_time', since),
   ])
   if (e1) throw e1
   if (e2) throw e2

@@ -150,6 +150,14 @@ function todoNextDueAfter(recurrence: string, days: number[] | null, after: stri
 const TIME_ARG_NOTE =
   'Times are LOCAL clock strings: date "YYYY-MM-DD", time "HH:MM" (24h). Omit date → target/today as described.'
 
+// Agent-created entries used to always get tags: [] — no way for the model to
+// tag them at all — while user-typed/voice entries (enrich-capture) reliably
+// carry a "gym" tag. That gap is why a real gym session logged by the agent
+// with a descriptive title ("Gym – upper body...") was silently invisible to
+// every gym-frequency/gym-gap query on the server, which key off this tag.
+const TAGS_ARG_NOTE =
+  'Lowercase tags, mirroring how manually-logged entries are tagged. For a GYM session specifically, always include "gym" as a tag (plus a workout-type tag if named — one of push/pull/legs/upper/lower/full-body/boxing/run/hyrox/rest, never a synonym) even if the title is more descriptive. This is what lets Pulse and the gym-gap nudge recognize the session.'
+
 const TOOLS = [
   {
     type: 'function',
@@ -194,6 +202,7 @@ const TOOLS = [
           title: { type: 'string' },
           start_date: { type: 'string' },
           start_time: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string' }, description: `${TAGS_ARG_NOTE}` },
           todo_id: { type: 'string', description: 'If this activity works on a backlog task, its todo id (stopping the timer then completes the task).' },
         },
         required: ['category_id', 'title'],
@@ -215,6 +224,7 @@ const TOOLS = [
           start_time: { type: 'string' },
           end_date: { type: 'string' },
           end_time: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string' }, description: `${TAGS_ARG_NOTE}` },
           todo_id: { type: 'string', description: 'If this logged period was a backlog task being done, its todo id — the task is marked done.' },
         },
         required: ['category_id', 'title', 'start_time', 'end_time'],
@@ -642,6 +652,8 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
     const diff = Math.abs(new Date(v + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime())
     return diff <= 3 * 86_400_000 ? v : today
   }
+  const strArr = (k: string): string[] =>
+    Array.isArray(args[k]) ? (args[k] as unknown[]).filter((v): v is string => typeof v === 'string') : []
 
   switch (name) {
     case 'list_time_entries': {
@@ -768,7 +780,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       }
       const { data, error } = await supabase
         .from('time_entries')
-        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: [], todo_id: todoId ?? null, source: 'agent' })
+        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: start, is_running: true, tags: strArr('tags'), todo_id: todoId ?? null, source: 'agent' })
         .select('id')
         .single()
       if (error) return { error: error.message }
@@ -856,7 +868,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
 
       const { data, error } = await supabase
         .from('time_entries')
-        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: [], todo_id: todoId ?? null, source: 'agent' })
+        .insert({ user_id: ctx.userId, category_id: cat, title, start_time: startIso, end_time: endIso, is_running: false, tags: strArr('tags'), todo_id: todoId ?? null, source: 'agent' })
         .select('id')
         .single()
       if (error) return { error: error.message }
