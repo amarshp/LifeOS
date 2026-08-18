@@ -7,6 +7,34 @@
 
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+export interface OfficeModeToday {
+  mode: 'office' | 'wfh' | 'holiday' | null
+  holidayName: string | null
+}
+
+/** Latest office_schedule_rules row on/before `dateStr` for that weekday, overridden by a holiday. */
+export async function computeOfficeModeToday(
+  supabase: SupabaseClient,
+  userId: string,
+  dateStr: string,
+  weekday: number,
+): Promise<OfficeModeToday> {
+  const [{ data: holiday }, { data: rule }] = await Promise.all([
+    supabase.from('holidays').select('name').eq('user_id', userId).eq('date', dateStr).maybeSingle(),
+    supabase
+      .from('office_schedule_rules')
+      .select('mode')
+      .eq('user_id', userId)
+      .eq('weekday', weekday)
+      .lte('effective_from', dateStr)
+      .order('effective_from', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+  if (holiday) return { mode: 'holiday', holidayName: holiday.name as string }
+  return { mode: (rule?.mode as OfficeModeToday['mode']) ?? null, holidayName: null }
+}
+
 export const WORKOUT_TYPES = ['push', 'pull', 'legs', 'upper', 'lower', 'full-body', 'boxing'] as const
 export type WorkoutType = (typeof WORKOUT_TYPES)[number]
 
@@ -47,6 +75,7 @@ export interface SleepEvidence {
   debtH: number | null // positive = short of target, summed over the lookback window
   recWakeClock: string | null
   recBedClock: string | null
+  wakeByDate: Array<{ date: string; wakeMin: number }> // per-night wake time, most recent last
 }
 
 /** `catName` maps a category_id to its display name (caller already has the list loaded). */
@@ -67,7 +96,7 @@ export async function computeSleepEvidence(
     .gte('start_time', sinceIso)
 
   const sleepByNight = new Map<string, number>()
-  const wakeMins: number[] = []
+  const wakeByDate: Array<{ date: string; wakeMin: number }> = []
   for (const e of entries ?? []) {
     const startMs = new Date(e.start_time as string).getTime()
     const endMs = e.end_time ? new Date(e.end_time as string).getTime() : nowMs
@@ -80,18 +109,19 @@ export async function computeSleepEvidence(
     const endLocalDate = endLocal.slice(0, 10)
     sleepByNight.set(endLocalDate, (sleepByNight.get(endLocalDate) ?? 0) + durMs)
     const [hh, mm] = endLocal.slice(11).split(':').map(Number)
-    wakeMins.push(hh * 60 + mm)
+    wakeByDate.push({ date: endLocalDate, wakeMin: hh * 60 + mm })
   }
+  wakeByDate.sort((a, b) => a.date.localeCompare(b.date))
 
   const nights = [...sleepByNight.values()]
   if (!nights.length) {
-    return { nightsLogged: 0, avgH: null, targetH: null, debtH: null, recWakeClock: null, recBedClock: null }
+    return { nightsLogged: 0, avgH: null, targetH: null, debtH: null, recWakeClock: null, recBedClock: null, wakeByDate: [] }
   }
   const avgH = nights.reduce((a, b) => a + b, 0) / nights.length / 3_600_000
   // Own rolling average, clamped to the NSF adult band — not a generic fixed number.
   const targetH = Math.min(9, Math.max(7, avgH))
   const debtH = nights.reduce((sum, ms) => sum + (targetH - ms / 3_600_000), 0)
-  const medWake = medianMinutes(wakeMins)
+  const medWake = medianMinutes(wakeByDate.map((w) => w.wakeMin))
   return {
     nightsLogged: nights.length,
     avgH,
@@ -99,6 +129,7 @@ export async function computeSleepEvidence(
     debtH,
     recWakeClock: minutesToClock(medWake),
     recBedClock: minutesToClock(medWake - targetH * 60),
+    wakeByDate,
   }
 }
 

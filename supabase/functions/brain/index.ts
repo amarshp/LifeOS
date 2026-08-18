@@ -14,7 +14,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { sendActivityUpdate } from '../_shared/apns.ts'
-import { computeSleepEvidence, computeWorkoutEvidence, isNapWindow } from '../_shared/wellness-evidence.ts'
+import { computeSleepEvidence, computeWorkoutEvidence, computeOfficeModeToday, isNapWindow } from '../_shared/wellness-evidence.ts'
 
 // CORS: the Expo WEB build calls this from a browser (app-open tick).
 const CORS_HEADERS = {
@@ -33,6 +33,10 @@ function json(data: unknown, status = 200): Response {
 
 function todayLocal(timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, dateStyle: 'short' }).format(new Date())
+}
+
+function weekdayOf(dateStr: string): number {
+  return (new Date(dateStr + 'T00:00:00Z').getUTCDay() + 6) % 7
 }
 
 function localHour(timeZone: string): number {
@@ -56,7 +60,7 @@ function addDaysStr(dateStr: string, days: number): string {
 
 interface DetectedConcern {
   key: string
-  kind: 'gap' | 'drift' | 'commitment' | 'morning' | 'evening' | 'gym-gap' | 'sleep-debt' | 'post-activity-nap' | 'late-diversion'
+  kind: 'gap' | 'drift' | 'commitment' | 'morning' | 'evening' | 'gym-gap' | 'sleep-debt' | 'post-activity-nap' | 'late-diversion' | 'late-wake'
   title: string
   detail: string
   evidence: string
@@ -78,6 +82,7 @@ const COOLDOWN_MIN: Record<DetectedConcern['kind'], number> = {
   'sleep-debt': 24 * 60,
   'post-activity-nap': 4 * 60,
   'late-diversion': 48 * 60,
+  'late-wake': 24 * 60,
 }
 
 interface Prefs {
@@ -104,6 +109,7 @@ function metricPhrase(kind: DetectedConcern['kind'], value: number | null): stri
     case 'sleep-debt': return `~${value.toFixed(1)}h sleep debt`
     case 'post-activity-nap': return `~${value.toFixed(1)}h sleep debt`
     case 'late-diversion': return `${value} late night${value === 1 ? '' : 's'}`
+    case 'late-wake': return `${value} last-resort wake${value === 1 ? '' : 's'}`
     default: return ''
   }
 }
@@ -147,6 +153,40 @@ async function detectConcerns(
 
   const running = (entries ?? []).filter((e) => e.is_running)
   const completed = (entries ?? []).filter((e) => !e.is_running && e.end_time)
+
+  // LATE-WAKE — hitting the LAST RESORT wake tier repeatedly on office days.
+  // The tier is meant to be rare (Amarsh's own words); if it's becoming the
+  // norm, that's worth surfacing rather than quietly planning around it.
+  // Same undated/self-clearing shape as gym-gap: streak-based, clears itself
+  // once a better wake breaks it.
+  const { data: wakeSettings } = await db
+    .from('user_settings')
+    .select('wake_lastresort_time')
+    .eq('user_id', userId)
+    .maybeSingle()
+  const lastResortTime = wakeSettings?.wake_lastresort_time as string | null
+  if (lastResortTime && sleepEv.wakeByDate.length) {
+    const [rh, rm] = lastResortTime.slice(0, 5).split(':').map(Number)
+    const lastResortMin = rh * 60 + rm
+    const officeNights: Array<{ date: string; wakeMin: number }> = []
+    for (const w of sleepEv.wakeByDate.slice(-7)) {
+      const mode = await computeOfficeModeToday(db, userId, w.date, weekdayOf(w.date))
+      if (mode.mode === 'office') officeNights.push(w)
+    }
+    const last5Office = officeNights.slice(-5)
+    const lateCount = last5Office.filter((w) => w.wakeMin >= lastResortMin).length
+    if (lateCount >= 3) {
+      out.push({
+        key: 'late-wake',
+        kind: 'late-wake',
+        title: 'Waking at the last-resort tier, repeatedly',
+        detail: `${lateCount} of your last ${last5Office.length} office-day wakes have been at or after ${lastResortTime.slice(0, 5)} — that tier was meant to be rare, not the norm. Worth resetting bedtime?`,
+        evidence: `lateCount=${lateCount}/${last5Office.length} office-day wakes >= ${lastResortTime.slice(0, 5)}`,
+        importance: lateCount >= 4 ? 3 : 2,
+        metricValue: lateCount,
+      })
+    }
+  }
 
   // GAP — awake hours, nothing tracking, last entry ended a while ago.
   if (hour >= 8 && hour < 23 && running.length === 0 && completed.length > 0) {

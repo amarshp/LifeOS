@@ -11,7 +11,14 @@
 // Secret:  npx supabase secrets set OPENAI_API_KEY=sk-...
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { computeSleepEvidence, computeWorkoutEvidence, computeDurationEvidence, isNapWindow } from '../_shared/wellness-evidence.ts'
+import {
+  computeSleepEvidence,
+  computeWorkoutEvidence,
+  computeDurationEvidence,
+  computeOfficeModeToday,
+  isNapWindow,
+  type OfficeModeToday,
+} from '../_shared/wellness-evidence.ts'
 
 const MODEL = 'gpt-5.1'
 // Reasoning effort for gpt-5.x: 'low' keeps latency inside OPENAI_TIMEOUT_MS
@@ -1323,34 +1330,6 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
 }
 
 // ─── Plan preferences (User Plan Preferences, 2026-08-18) ────────────────────
-
-interface OfficeModeToday {
-  mode: 'office' | 'wfh' | 'holiday' | null
-  holidayName: string | null
-}
-
-/** Latest office_schedule_rules row on/before `dateStr` for that weekday, overridden by a holiday. */
-async function computeOfficeModeToday(
-  supabase: SupabaseClient,
-  userId: string,
-  dateStr: string,
-  weekday: number,
-): Promise<OfficeModeToday> {
-  const [{ data: holiday }, { data: rule }] = await Promise.all([
-    supabase.from('holidays').select('name').eq('user_id', userId).eq('date', dateStr).maybeSingle(),
-    supabase
-      .from('office_schedule_rules')
-      .select('mode')
-      .eq('user_id', userId)
-      .eq('weekday', weekday)
-      .lte('effective_from', dateStr)
-      .order('effective_from', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ])
-  if (holiday) return { mode: 'holiday', holidayName: holiday.name as string }
-  return { mode: (rule?.mode as OfficeModeToday['mode']) ?? null, holidayName: null }
-}
 
 interface PlanPrefsSettings {
   wake_ideal_time: string | null
