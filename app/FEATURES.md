@@ -131,6 +131,7 @@
 - A Day/Week toggle was tried and parked (2026-07-04, UX didn't land) — Week's grid still exists as `src/components/WeekTimeline.tsx` but isn't wired into any screen right now
 - **Faster load**: block-fetching switched from one `getEffectiveBlocksForDate` round-trip pair per date in the window (up to 12 requests, including redundantly refetching the whole recurring-blocks table on every date) to the existing `getBlocksInRange` batched query (2 requests for the whole window) — same function Insights already used for its Week/Month view. Main source of the multi-second blank load on this screen.
 - List mode (the Timeline ↔ List toggle) now also shows planned/scheduled blocks, not just tracked entries — same upcoming/in-progress set Timeline mode already renders (`getVisiblePlannedBlocks`), styled distinctly (hollow dot, left border in category color, "Planned" label) and tappable to edit like Timeline's blocks. Previously this view never received blocks at all.
+- `propose_plan` now reuses a backlog task's own title verbatim when linking a block to it (`todo_id` set), instead of letting the model invent a fuller phrasing ("Work" → "Office work - focused block"). Plan-vs-actual matches by category+time only (title was never load-bearing there), but Insights' Plan Drift table and Home's "next" line both display the plan's title next to the tracked outcome — a reworded title made a fully-honoured task visually read as unmet.
 
 ## Insights View
 - 5th tab (Home / Day / Agent / Tasks / Insights / Settings) with a bar-chart icon
