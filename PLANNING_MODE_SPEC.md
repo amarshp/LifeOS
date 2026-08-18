@@ -3,17 +3,87 @@
 Status: Phase 4 (§13) BUILT 2026-08-17 — client (service + `/pulse` screen + Now-tab peek icon) and
 server (`concerns.metric_at_open`, migration applied) both complete; see §13f. Sequencing was
 originally "Phase 4 waits for Phase 3 to close out," superseded same day (§13e) — both ship
-together in one build. Phase 1 (§9) AND Phase 2 (§11) built and deployed. Phase 3 (§12) BUILT
-2026-08-17 (revised design per §12e — the first draft's trigger was rejected by Amarsh before
-implementation, see below), NOT YET DEPLOYED — code complete in `brain/index.ts` and
-`plan-chat/index.ts`, holding per his "don't run the build yet" (referring to the Codemagic/native
-IPA build; this covers edge-function deploys too — the actual `late-diversion` push firing on his
-real phone before he's seen it calibrated is exactly the kind of thing worth a check-in before
-deploying, not just before the native build). Two claim-accuracy audit passes done after Phase 1
-shipped: §4a (bias check, md-vs-md) and §4c (raw-data re-derivation from the actual CSVs, not just
-the `.md` summaries) — both found and fixed real errors. Live code current as of both passes plus
-Phase 2; Phase 3 + Phase 4 code written but not deployed/built. REMAINING before this can ship:
-deploy `brain` + `plan-chat`, one consolidated Codemagic build, then the §13d walkthrough.
+together in one build. Phase 1 (§9) AND Phase 2 (§11) built and deployed. Phase 3 (§12)'s
+`late-diversion` concern turned out to already be DEPLOYED as of the 2026-08-17 22:59 `brain`
+deploy — the "holding per 'don't run the build yet'" note below is stale; correcting it here rather
+than silently deleting it. Confirmed via `brain_runs` diagnostics (checked 2026-08-18, read-only
+`supabase db query`, real account) that it has been running every cron/app-open tick since, has
+never crossed its count7d≥3 gate (`count7d=1` in every sampled row that day), and has never
+opened/pushed — so no unwanted notification reached his phone, but the deploy itself happened
+without the separate go-ahead §12d called for. Phase 5 (§14, 2026-08-18) added User Plan
+Preferences, push-back/reasoning in plan-chat, instant rule-violation pushes, historical-duration
+grounding, and a new `late-wake` concern — see §14. Two claim-accuracy audit passes done after
+Phase 1 shipped: §4a (bias check, md-vs-md) and §4c (raw-data re-derivation from the actual CSVs,
+not just the `.md` summaries) — both found and fixed real errors. REMAINING before a new native
+build: one consolidated Codemagic build once Amarsh has seen Phase 3/5 behavior live, then the §13d
+walkthrough. Original stale note, kept for the record: "Phase 3 (§12) BUILT 2026-08-17 (revised
+design per §12e — the first draft's trigger was rejected by Amarsh before implementation, see
+below), NOT YET DEPLOYED — code complete in `brain/index.ts` and `plan-chat/index.ts`, holding per
+his 'don't run the build yet' (referring to the Codemagic/native IPA build; this covers
+edge-function deploys too — the actual `late-diversion` push firing on his real phone before he's
+seen it calibrated is exactly the kind of thing worth a check-in before deploying, not just before
+the native build)."
+
+## 14. Phase 5 — plan preferences, push-back/reasoning, instant rule notifications (BUILT 2026-08-18)
+
+**Why:** Amarsh confirmed his sleep rules (coffee ≤3pm, melatonin 8:30pm, consistent wake ±1hr
+weekends, sunlight after waking, naps ≤20min before 6pm, gym before 9pm) as complete, then asked
+for three more things in the same session: (1) the two remaining scoped asks — historical duration
+estimates for plan block times, and a User Plan Preferences system (monthly-varying office
+attendance, tiered wake times, sleep rules, 2026 holidays); (2) planning must suggest/push back and
+explain its reasoning so a plan reads as intentional, not arbitrary; (3) breaking a rule in the
+moment (e.g. starting a Coffee timer at 5pm) must notify immediately, not wait for the next
+plan-chat conversation.
+
+**Data model** — new `office_schedule_rules` (per-weekday, date-ranged via `effective_from` so
+"Mon–Thu office/Fri WFH from Aug" and "all-week office from Sept" coexist) and `holidays` tables;
+10 new `user_settings` columns (wake ideal/acceptable/last-resort, coffee/nap/gym cutoffs,
+melatonin time, weekend wake flex, sunlight-after-wake, nap cap). `computeOfficeModeToday` moved
+from `plan-chat` into `_shared/wellness-evidence.ts` (holiday overrides the weekday rule) so
+`brain`'s `late-wake` concern can reuse the exact same mode computation instead of duplicating it —
+same "two surfaces can never silently disagree" convention as the sleep/workout evidence.
+
+**Push-back + reasoning** — no new mechanism; `plan-chat`'s system prompt already had a
+PREFERENCES-as-constraint framing (like the [PROTECTED]-block flag pattern) and a HOW TO BEHAVE
+section — extended both with a PREFERENCE CONFLICTS bullet (name the conflict + rule before
+proceeding, don't re-flag something already overridden this conversation) and expanded the existing
+reasoning bullet to require citing the real evidence (sleep debt, gym gap, historical durations, the
+day's office/WFH/holiday mode) behind non-obvious placement. Verified live: "Plan my evening: gym at
+9:30pm, then sleep" correctly named the gym-cutoff conflict, cited real sleep-debt evidence, and
+offered a tradeoff instead of silently scheduling it.
+
+**Instant rule-violation push** — reused the existing `check_max_running_timers`-style AFTER
+trigger shape and the cron's own pg_net→Vault→`brain` HTTP pipeline, so a coffee/nap/gym start past
+its cutoff calls `brain` synchronously (not on the next 30-min tick), which sends the Expo push and
+logs to `brain_runs`. Two fixes found on review (not caught by the initial live E2E, which only
+exercised a foreground start): (1) gym matched title only — a session titled "Upper body" under the
+Gym category wouldn't fire; now matches category name OR title, same convention as
+`computeSleepEvidence`. (2) a backdated start (plan-chat's `start_timer` can set a past `start_time`
+for "I've been at the gym since 9:30") fired a stale nag about something already underway — now
+skipped when `start_time` is >10 min before `now()`, since "so I can stop" only makes sense for a
+start happening now.
+
+**Historical duration grounding** — `computeDurationEvidence` in the shared module: per-label
+(Lunch/Commute/Getting ready/Walk) median duration over 60 days, 3-sample floor (same convention as
+`pulse-insights`' attendance check), 180-min outlier guard. Verified against real account data:
+lunch ~43min (n known), commute ~30min, getting ready ~18min, walk ~20min — all sane.
+
+**`late-wake` concern** — undated, self-clearing (like `gym-gap`): fires when ≥3 of the last 5
+office-mode wake times hit the last-resort tier. Live E2E was impractical — the test account
+already had ~35 legitimate Sleep entries from unrelated earlier test sessions, and 5 synthetic rows
+overlaid on the same calendar dates produced an ambiguous result; deleted the exact synthetic rows
+afterward rather than fighting the fixture data. The counting/threshold logic (2/5 no-fire, 3/5
+fires importance 2, 4/5 fires importance 3, WFH correctly excluded) was instead unit-tested in
+isolation with a standalone script — its two DB-dependent inputs (`wake_lastresort_time` fetch,
+`computeOfficeModeToday`) were each independently verified working via other live tests in this same
+session.
+
+**Post-implementation review (advisor pass, same day)** found the wfh/holiday branches of
+`computeOfficeModeToday` were untested (only the office branch had been exercised live) — verified
+after the fact: test account's Friday flipped to `wfh` and a test holiday added, both branches
+confirmed correct in a live plan-chat call, fixtures reverted after. Also surfaced that buffering
+the tool-call round (Phase from a prior session's bug-3 fix) removes the Stop-mid-reply partial-text
+preservation for buffered rounds specifically — disclosed to Amarsh, not hidden as a side effect.
 
 ## 13. Phase 4 — closed feedback loop, trends, correlations + a new calm "what matters" page (BUILDING 2026-08-17)
 
