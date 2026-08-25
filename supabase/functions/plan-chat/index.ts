@@ -277,7 +277,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'restore_time_entry',
-      description: 'Undo a soft-delete — brings back an entry from list_time_entries\' recently_removed list exactly as it was (same title/category/times). Use when the user disputes an override/erasure and the entry shows up there.',
+      description: 'Undo a soft-delete — brings back an entry from list_time_entries\' recently_removed list (same title/category/start time). Use when the user disputes an override/erasure and the entry shows up there. If it was still running when removed, it comes back as COMPLETED, ending at the moment it was removed — not resumed as running (something else may be running now). Call start_timer separately if the user actually wants to resume it.',
       parameters: {
         type: 'object',
         properties: { entry_id: { type: 'string' } },
@@ -1013,23 +1013,30 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       if (!ctx.allowedEntryIds.has(id)) return { error: 'unknown entry_id — call list_time_entries first' }
       const { data: row, error: fetchErr } = await supabase
         .from('time_entries')
-        .select('id, title, start_time, end_time')
+        .select('id, title, start_time, end_time, deleted_at')
         .eq('id', id)
         .not('deleted_at', 'is', null)
         .single()
       if (fetchErr || !row) return { error: 'entry is not a recent soft-delete — call list_time_entries first' }
+      // It was running (end_time null) when removed — "now" has moved on since,
+      // and whatever else is running today owns that status. Restoring it as
+      // still-open-ended would put two "running" entries in a single-timer
+      // account. Close it at the moment it was removed instead — a completed
+      // period, not a resumed timer. (Explicitly resuming it is a separate,
+      // deliberate action, not something a restore should do implicitly.)
+      const restoredEnd = (row.end_time as string | null) ?? (row.deleted_at as string)
       // Whatever now sits in this window (e.g. the very entry that swallowed
       // it) needs to make room, same as a fresh backfill would — otherwise the
       // restored period just overlaps it instead of actually undoing anything.
-      await resolveOneRealityOverlap(ctx, row.start_time as string, (row.end_time as string | null) ?? new Date().toISOString())
+      await resolveOneRealityOverlap(ctx, row.start_time as string, restoredEnd)
       const { data, error } = await supabase
         .from('time_entries')
-        .update({ deleted_at: null })
+        .update({ deleted_at: null, end_time: restoredEnd, is_running: false })
         .eq('id', id)
         .select('id, title, start_time, end_time')
         .single()
       if (error) return { error: error.message }
-      ctx.actions.push(`Restored "${data.title}" ${isoToLocal(data.start_time as string, tz)} → ${data.end_time ? isoToLocal(data.end_time as string, tz) : 'now'}`)
+      ctx.actions.push(`Restored "${data.title}" ${isoToLocal(data.start_time as string, tz)} → ${isoToLocal(data.end_time as string, tz)}`)
       return { ok: true }
     }
 
