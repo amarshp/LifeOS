@@ -14,6 +14,7 @@
 - Now (evolved Home): bell → Notification Center, gear → Settings, tracking-gap card ("2h 1m untracked since 10:29 — Fill it in →") and plan-drift card (→ Agent replan), at most one at a time
 - Day·Tasks: one tab, big serif segmented header (separate routes preserved); insights glyph in the header; Day view has a Timeline ↔ List toggle (ghost button above the FAB) — Toggl-style fixed-height rows, sub-minute entries visible, dashed tappable gap rows, sticky preference
 - Week stays parked; Insights/Settings/Tasks remain as routes off the tab bar
+- **Fixed: editing an earlier completed entry's "Set start to last stop time" showed the wrong time.** It reused the account-wide most-recently-stopped entry regardless of which entry you were editing — correct when editing today's latest entry (nothing exists after it), wrong for an earlier block that already has entries logged after it (e.g. editing an 11pm–3am block when Skincare/Sleep came later showed Skincare's end time instead of the real preceding entry's). Now computed per-entry from the loaded day range (`findPrecedingEntryEnd` in `day.tsx`); verified live via Expo web against the test account — sheet now shows the true predecessor's end time.
 
 ### Notifications v1 (local — fire with the app killed)
 - Derived reminders: plan blocks (1–3 lead-time offsets), task deadlines (own offsets), plan-tomorrow nudge (set time), reconciled into a rolling 48h window of local notifications on foreground/focus/prefs change

@@ -312,6 +312,19 @@ function isDateInRange(date: string, startDate: string, endDate: string): boolea
   return dateOffset(startDate, date) >= 0 && dateOffset(date, endDate) >= 0
 }
 
+// The entry that ends right before `forEntry` starts — NOT the account-wide
+// most-recently-stopped entry (`lastStoppedEntry`), which is only the same
+// thing when forEntry happens to be the last entry of the day. Editing an
+// earlier block (with entries logged after it) needs its own true neighbor.
+function findPrecedingEntryEnd(entries: TimeEntry[], forEntry: TimeEntry): string | null {
+  let best: string | null = null
+  for (const e of entries) {
+    if (e.id === forEntry.id || !e.end_time || e.end_time > forEntry.start_time) continue
+    if (!best || e.end_time > best) best = e.end_time
+  }
+  return best
+}
+
 export default function DayScreen() {
   const params = useLocalSearchParams<{ sheet?: string; date?: string; editEntry?: string; focusTs?: string; gapStart?: string; gapEnd?: string; todoId?: string; todoTitle?: string }>()
   const router = useRouter()
@@ -1420,7 +1433,15 @@ export default function DayScreen() {
         categories={categories}
         savedTags={savedTags}
         tagUsage={tagUsage}
-        lastStopTime={lastStoppedEntry?.end_time ?? null}
+        lastStopTime={
+          // A running entry has nothing after it, so the account-wide last
+          // stop IS its true predecessor. A completed entry may have entries
+          // logged after it too (editing an earlier block) — those must not
+          // count, so look up its actual neighbor instead of the global one.
+          editingEntry?.is_running
+            ? (lastStoppedEntry?.end_time ?? null)
+            : (editingEntry ? findPrecedingEntryEnd(entries, editingEntry) : null)
+        }
         onClose={() => setEditingEntry(null)}
         onSave={async () => {
           setEditingEntry(null)

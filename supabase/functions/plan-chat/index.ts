@@ -634,6 +634,61 @@ async function completeTodoRecord(ctx: ToolCtx, todoId: string): Promise<Record<
   return { ok: true }
 }
 
+/**
+ * ONE REALITY: with parallel timers off, the [startIso, endIso) window being
+ * (re)inserted is the truth for that span — trim/split/remove whatever else
+ * covers it (completed or running) instead of leaving a hidden overlap.
+ * Shared by add_completed_entry (new period) and restore_time_entry (a period
+ * coming back from a soft-delete) — either way, something else may since have
+ * claimed the time and needs to make room the same way.
+ */
+async function resolveOneRealityOverlap(ctx: ToolCtx, startIso: string, endIso: string): Promise<void> {
+  const { supabase, tz } = ctx
+  if (ctx.allowParallel) return
+  const nowIso2 = new Date().toISOString()
+  const { data: overlaps } = await supabase
+    .from('time_entries')
+    .select('id, title, category_id, start_time, end_time, is_running, tags, todo_id')
+    .is('deleted_at', null)
+    .lt('start_time', endIso)
+    .or(`end_time.gt.${startIso},is_running.eq.true`)
+  for (const o of overlaps ?? []) {
+    const oStart = o.start_time as string
+    const oEnd = (o.end_time as string | null) ?? nowIso2
+    if (oEnd <= startIso) continue // touching, not overlapping
+    if (oStart < startIso && oEnd > endIso) {
+      // Spans the whole window → split around it.
+      await supabase.from('time_entries').update({ end_time: startIso, is_running: false }).eq('id', o.id)
+      await supabase.from('time_entries').insert({
+        user_id: ctx.userId, category_id: o.category_id, title: o.title,
+        start_time: endIso, end_time: o.is_running ? null : oEnd,
+        is_running: o.is_running === true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
+        source: 'agent',
+      })
+      ctx.actions.push(`Split "${o.title}" around the logged period`)
+    } else if (oStart < startIso) {
+      await supabase.from('time_entries').update({ end_time: startIso, is_running: false }).eq('id', o.id)
+      // An interrupted RUNNING activity resumes after the backfill.
+      if (o.is_running && endIso <= nowIso2) {
+        await supabase.from('time_entries').insert({
+          user_id: ctx.userId, category_id: o.category_id, title: o.title,
+          start_time: endIso, is_running: true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
+          source: 'agent',
+        })
+        ctx.actions.push(`Trimmed "${o.title}" to ${isoToLocal(startIso, tz)} and resumed it after`)
+      } else {
+        ctx.actions.push(`Trimmed "${o.title}" to end ${isoToLocal(startIso, tz)}`)
+      }
+    } else if (oEnd > endIso) {
+      await supabase.from('time_entries').update({ start_time: endIso }).eq('id', o.id)
+      ctx.actions.push(`Moved "${o.title}" to start ${isoToLocal(endIso, tz)}`)
+    } else {
+      await supabase.from('time_entries').update({ deleted_at: nowIso2, is_running: false }).eq('id', o.id)
+      ctx.actions.push(`Removed "${o.title}" (covered by the logged period)`)
+    }
+  }
+}
+
 const WEB_SEARCH_TIMEOUT_MS = 15_000
 
 // Isolated hand-off, not a main-loop swap: gpt-4o-search-preview rejects the
@@ -718,7 +773,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .not('deleted_at', 'is', null)
         .gt('deleted_at', recentCutoff)
         .lt('start_time', dayEnd)
-        .gt('end_time', dayStart)
+        .or(`end_time.gt.${dayStart},end_time.is.null`)
         .order('start_time')
       for (const e of removedData ?? []) ctx.allowedEntryIds.add(e.id as string)
       const recentlyRemoved = (removedData ?? []).map((e) => ({
@@ -870,53 +925,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .limit(1)
       if (dup && dup.length > 0) return { ok: true, entry_id: dup[0].id, note: 'already logged — no duplicate created' }
 
-      // ONE REALITY: with parallel timers off, a backfilled period is the truth
-      // for its window — trim whatever else covers it (completed or running)
-      // instead of leaving a hidden overlap on the timeline.
-      if (!ctx.allowParallel) {
-        const nowIso2 = new Date().toISOString()
-        const { data: overlaps } = await supabase
-          .from('time_entries')
-          .select('id, title, category_id, start_time, end_time, is_running, tags, todo_id')
-          .is('deleted_at', null)
-          .lt('start_time', endIso)
-          .or(`end_time.gt.${startIso},is_running.eq.true`)
-        for (const o of overlaps ?? []) {
-          const oStart = o.start_time as string
-          const oEnd = (o.end_time as string | null) ?? nowIso2
-          if (oEnd <= startIso) continue // touching, not overlapping
-          if (oStart < startIso && oEnd > endIso) {
-            // Spans the whole window → split around it.
-            await supabase.from('time_entries').update({ end_time: startIso, is_running: false }).eq('id', o.id)
-            await supabase.from('time_entries').insert({
-              user_id: ctx.userId, category_id: o.category_id, title: o.title,
-              start_time: endIso, end_time: o.is_running ? null : oEnd,
-              is_running: o.is_running === true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
-              source: 'agent',
-            })
-            ctx.actions.push(`Split "${o.title}" around the logged period`)
-          } else if (oStart < startIso) {
-            await supabase.from('time_entries').update({ end_time: startIso, is_running: false }).eq('id', o.id)
-            // An interrupted RUNNING activity resumes after the backfill.
-            if (o.is_running && endIso <= nowIso2) {
-              await supabase.from('time_entries').insert({
-                user_id: ctx.userId, category_id: o.category_id, title: o.title,
-                start_time: endIso, is_running: true, tags: o.tags ?? [], todo_id: o.todo_id ?? null,
-                source: 'agent',
-              })
-              ctx.actions.push(`Trimmed "${o.title}" to ${isoToLocal(startIso, tz)} and resumed it after`)
-            } else {
-              ctx.actions.push(`Trimmed "${o.title}" to end ${isoToLocal(startIso, tz)}`)
-            }
-          } else if (oEnd > endIso) {
-            await supabase.from('time_entries').update({ start_time: endIso }).eq('id', o.id)
-            ctx.actions.push(`Moved "${o.title}" to start ${isoToLocal(endIso, tz)}`)
-          } else {
-            await supabase.from('time_entries').update({ deleted_at: nowIso2 }).eq('id', o.id)
-            ctx.actions.push(`Removed "${o.title}" (covered by the logged period)`)
-          }
-        }
-      }
+      await resolveOneRealityOverlap(ctx, startIso, endIso)
 
       const { data, error } = await supabase
         .from('time_entries')
@@ -1002,6 +1011,17 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
       const id = str('entry_id')
       if (!id) return { error: 'entry_id required' }
       if (!ctx.allowedEntryIds.has(id)) return { error: 'unknown entry_id — call list_time_entries first' }
+      const { data: row, error: fetchErr } = await supabase
+        .from('time_entries')
+        .select('id, title, start_time, end_time')
+        .eq('id', id)
+        .not('deleted_at', 'is', null)
+        .single()
+      if (fetchErr || !row) return { error: 'entry is not a recent soft-delete — call list_time_entries first' }
+      // Whatever now sits in this window (e.g. the very entry that swallowed
+      // it) needs to make room, same as a fresh backfill would — otherwise the
+      // restored period just overlaps it instead of actually undoing anything.
+      await resolveOneRealityOverlap(ctx, row.start_time as string, (row.end_time as string | null) ?? new Date().toISOString())
       const { data, error } = await supabase
         .from('time_entries')
         .update({ deleted_at: null })
