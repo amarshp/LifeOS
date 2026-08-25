@@ -174,7 +174,7 @@ const TOOLS = [
     function: {
       name: 'list_time_entries',
       description:
-        `List the user's real tracked time entries for a local date, including any RUNNING timers (end_time null). Returns { entries, gaps } where gaps is the deterministically-computed list of uncovered spans (≥10 min) between entries — trust it, do not re-derive gaps by eyeballing entry times. Use before fixing/backfilling. ${TIME_ARG_NOTE}`,
+        `List the user's real tracked time entries for a local date, including any RUNNING timers (end_time null). Returns { entries, gaps, recently_removed } where gaps is the deterministically-computed list of uncovered spans (≥10 min) between entries — trust it, do not re-derive gaps by eyeballing entry times — and recently_removed lists entries soft-deleted in the last 7 days that overlap this date (e.g. auto-trimmed because a later backfill's window covered them). If the user says something was overridden/erased/lost, check recently_removed before saying it's unrecoverable — restore_time_entry brings one back exactly as it was. Use before fixing/backfilling. ${TIME_ARG_NOTE}`,
       parameters: {
         type: 'object',
         properties: { date: { type: 'string', description: 'Local date YYYY-MM-DD. Defaults to today.' } },
@@ -266,6 +266,18 @@ const TOOLS = [
     function: {
       name: 'delete_time_entry',
       description: 'Soft-delete a time entry the user says is wrong/duplicate.',
+      parameters: {
+        type: 'object',
+        properties: { entry_id: { type: 'string' } },
+        required: ['entry_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'restore_time_entry',
+      description: 'Undo a soft-delete — brings back an entry from list_time_entries\' recently_removed list exactly as it was (same title/category/times). Use when the user disputes an override/erasure and the entry shows up there.',
       parameters: {
         type: 'object',
         properties: { entry_id: { type: 'string' } },
@@ -696,6 +708,27 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         end_local: e.end_time ? isoToLocal(e.end_time, tz) : null,
         is_running: e.is_running,
       }))
+      // Entries another action recently soft-deleted (e.g. an add_completed_entry
+      // whose window covered them) — surfaced so the model can actually recover
+      // them via restore_time_entry instead of telling the user they're gone.
+      const recentCutoff = new Date(Date.now() - 7 * 86_400_000).toISOString()
+      const { data: removedData } = await supabase
+        .from('time_entries')
+        .select('id, title, category_id, start_time, end_time, deleted_at')
+        .not('deleted_at', 'is', null)
+        .gt('deleted_at', recentCutoff)
+        .lt('start_time', dayEnd)
+        .gt('end_time', dayStart)
+        .order('start_time')
+      for (const e of removedData ?? []) ctx.allowedEntryIds.add(e.id as string)
+      const recentlyRemoved = (removedData ?? []).map((e) => ({
+        id: e.id,
+        title: e.title,
+        category_id: e.category_id,
+        start_local: isoToLocal(e.start_time, tz),
+        end_local: e.end_time ? isoToLocal(e.end_time as string, tz) : null,
+        removed_at_local: isoToLocal(e.deleted_at as string, tz),
+      }))
       // Deterministic gap detection: interior uncovered spans between entries.
       // The model must not eyeball adjacency across many rows — it misses gaps
       // (esp. sleep→next boundaries). We hand it the holes directly.
@@ -720,7 +753,7 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         }
         if (spans[i].end > cursor) cursor = spans[i].end
       }
-      return { entries: rows, gaps }
+      return { entries: rows, gaps, recently_removed: recentlyRemoved }
     }
 
     case 'stop_timer': {
@@ -962,6 +995,21 @@ async function runTool(ctx: ToolCtx, name: string, args: Record<string, unknown>
         .single()
       if (error) return { error: error.message }
       ctx.actions.push(`Deleted entry "${data.title}"`)
+      return { ok: true }
+    }
+
+    case 'restore_time_entry': {
+      const id = str('entry_id')
+      if (!id) return { error: 'entry_id required' }
+      if (!ctx.allowedEntryIds.has(id)) return { error: 'unknown entry_id — call list_time_entries first' }
+      const { data, error } = await supabase
+        .from('time_entries')
+        .update({ deleted_at: null })
+        .eq('id', id)
+        .select('id, title, start_time, end_time')
+        .single()
+      if (error) return { error: error.message }
+      ctx.actions.push(`Restored "${data.title}" ${isoToLocal(data.start_time as string, tz)} → ${data.end_time ? isoToLocal(data.end_time as string, tz) : 'now'}`)
       return { ok: true }
     }
 
@@ -1696,6 +1744,7 @@ ACTING WITH TOOLS (you are an agent, not just a planner):
 - You can list/stop/start/insert/edit/delete the user's REAL tracked time entries and planned schedule blocks. Use tools whenever the user asks you to change something real — don't just talk about it.
 - SWITCH: when the user says they are NOW doing something different ("taking a coffee break", "starting lunch", "back to office work"), just call start_timer for the new activity — the previous timer is stopped automatically at that instant. Do NOT ask how long it will take, and do NOT call stop_timer first for a simple switch. (For BACKFILL, still stop stale timers at their TRUE historical end before adding entries — the auto-stop uses the new start time, which is wrong for a timer that really ended hours ago.) SWITCH IS NOT THE WHOLE MESSAGE if it also recounts what the RUNNING timer actually was ("I actually wasn't doing X, I was doing Y" / "I was working, not resting") — that recount is a SEPARATE required edit, not flavor text you can drop. In that case, BEFORE calling start_timer for the new activity: call update_time_entry on the (about-to-be-switched) running entry to correct its title/category to what it really was. Only after that edit succeeds do you call start_timer for what's happening now. See COMPOUND CORRECTION below for the full worked pattern — this is the same case, and skipping the update step is a confirmed real failure that has already happened once.
 - BACKFILL: when the user recounts what actually happened (e.g. "forgot to track: woke at 8, got ready till 8:30, drove till 9, working since"), first call list_time_entries to see the day (there may be a stale RUNNING timer like Sleep or a very-old running entry from a prior day — check its start_local). Then: stop the stale timer at its true end, add_completed_entry for each missed period, and start_timer for what they're doing NOW. Chain times so periods touch without gaps or overlaps.
+- BACKFILL FILLS GAPS, IT NEVER SWALLOWS ALREADY-LOGGED TIME: add_completed_entry silently trims/deletes ANY existing entry it overlaps — including a real, correctly-logged Lunch/errand/call the user tracked separately earlier. Before writing a backfill spanning more than a few minutes, look at the entries list_time_entries already returned for that window. If one or more already-logged entries sit inside the recounted span, do NOT add_completed_entry across the whole span — call it once per actual empty sub-period (the "gaps" array is the exact boundaries), so the existing entries are left untouched. This is exactly what "backfill the gaps" means when the user says it explicitly. Only ever cover an existing entry with a new one when the user is explicitly correcting it ("that wasn't lunch, I was on a call") — never because one blanket entry is simpler to write.
 - ALWAYS CLOSE GAPS AFTER BACKFILL: the moment you finish writing a backfill, call list_time_entries again and read its "gaps" array. If it is non-empty, you MUST proactively raise it in the SAME reply — do not wait for the user to notice. Name each gap with its clock window ("there's still 08:42–09:00 open") and ask what they were doing then, in one concise question covering all gaps. Only report the day as complete once a fresh list_time_entries returns gaps: []. Never end a backfill turn silently leaving gaps unaddressed.
 - Each backfilled entry's TITLE must describe that specific activity in the user's words ("Getting ready", "Drive to office") — never reuse the previous activity's title. Pick the closest category for each (commute → Commute, chores/errands/getting ready → Admin or Break); only the sleep period itself goes under Sleep.
 - Tool time args: pass times as "HH:MM" exactly as the user said them. ALWAYS pass explicit start_date/end_date — do not rely on the "defaults to today" omission for any backfilled period once the narrative involves more than a few recent hours; get it wrong and every activity silently lands on the wrong calendar day. Never invent dates — only use TODAY'S DATE, YESTERDAY'S DATE, a date from the UPCOMING DAYS map (for future events the user names by weekday), or a date returned by list_time_entries/list_calendar_blocks.
@@ -1783,6 +1832,8 @@ function stepLabel(name: string, args: Record<string, unknown>): string {
     case 'update_time_entry':
     case 'delete_time_entry':
       return 'Fixing a time entry…'
+    case 'restore_time_entry':
+      return 'Restoring a time entry…'
     case 'add_reminder':
       return 'Setting a reminder…'
     case 'cancel_reminder':
