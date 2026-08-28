@@ -19,6 +19,7 @@ import {
   isNapWindow,
   type OfficeModeToday,
 } from '../_shared/wellness-evidence.ts'
+import { describeOpenAIError } from '../_shared/openai-errors.ts'
 
 const MODEL = 'gpt-5.1'
 // Reasoning effort for gpt-5.x: 'low' keeps latency inside OPENAI_TIMEOUT_MS
@@ -1935,7 +1936,7 @@ async function streamOpenAICompletion(
 
   if (!res.ok) {
     const detail = await res.text()
-    throw new HttpError(502, `openai error ${res.status}`, detail)
+    throw new HttpError(502, describeOpenAIError(res.status, detail), detail)
   }
 
   const reader = res.body?.getReader()

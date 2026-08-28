@@ -11,6 +11,7 @@
 const MODEL = 'gpt-4o-mini-transcribe'
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { describeOpenAIError } from '../_shared/openai-errors.ts'
 
 interface Body {
   audio_base64?: string
@@ -111,7 +112,7 @@ Deno.serve(async (req) => {
 
   if (!res.ok) {
     const detail = await res.text()
-    return json({ error: `openai error ${res.status}`, detail }, 502)
+    return json({ error: describeOpenAIError(res.status, detail), detail }, 502)
   }
 
   const data = await res.json()
