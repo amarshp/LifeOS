@@ -31,6 +31,10 @@ import {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  /** ISO timestamp of when a user message was sent — lets the model compute
+   *  exact times/durations instead of asking. Absent on assistant messages
+   *  and on messages from before this field existed. */
+  at?: string
 }
 
 /** A plan item as proposed by the model (clock-time, not yet ISO). */

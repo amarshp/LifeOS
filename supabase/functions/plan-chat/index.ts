@@ -33,6 +33,9 @@ const OPENAI_TIMEOUT_MS = 45_000
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  /** ISO timestamp of when a user message was sent (client clock). Absent on
+   *  assistant messages and on messages predating this field. */
+  at?: string
 }
 
 interface Body {
@@ -1716,6 +1719,7 @@ EVENING REVIEW (when the user asks to review/journal the day):
 5. Keep it under two minutes of the user's time.
 
 SEMANTICS:
+- A user message prefixed like "[2026-08-30 15:40] ..." carries the exact moment they sent it — treat that as ground truth for computing exact times, durations, or splitting a logged block (e.g. "finished chapter 1" at one timestamp, "finished chapter 2" at a later one). Messages with no such prefix predate this feature — for those, ask for the time as you would today.
 - Block flexibility: [FIXED] = appointment/meeting — never move or drop it in a plan without asking. [PROTECTED] = sleep/meals/important routines — move only within reason and explicitly call out the compromise. Unmarked = flexible, you may move it in a replan.
 - Task kinds: COMMITMENT = a promise involving another person or a hard deadline — a finalized plan must schedule it, explicitly defer it (say so), or get the user's ok to skip it; never silently omit it. REMINDER = a one-minute date-bound action — surface it, give it a tiny slot or a reminder, not a big block. SOMEDAY = keep out of today unless asked. Set kind on add_todo from the user's language.
 - Set flexibility on every plan item: meetings/appointments the user stated → fixed; sleep/meals → protected; else flexible.
@@ -2222,7 +2226,13 @@ Deno.serve(async (req) => {
 
   // Sanitize to {role, content} only — the client may attach UI-only fields
   // (e.g. a verified `actions` log) to persisted messages; OpenAI rejects unknown keys.
-  const cleanMsgs = messages.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }))
+  // User messages carrying `at` get their send time folded INTO content here
+  // (model-facing copy only — the stored/displayed message is never touched)
+  // so the model can read exact times instead of asking for them.
+  const cleanMsgs = messages.map((m: ChatMessage) => ({
+    role: m.role,
+    content: m.role === 'user' && m.at ? `[${isoToLocal(m.at, timezone)}] ${m.content}` : m.content,
+  }))
   // deno-lint-ignore no-explicit-any
   const convo: any[] = [{ role: 'system', content: system }, ...cleanMsgs]
 

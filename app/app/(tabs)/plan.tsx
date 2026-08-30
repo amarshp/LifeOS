@@ -294,7 +294,7 @@ export default function PlanScreen() {
       // Drop any prior error notes so they don't get re-sent as context (they'd
       // confuse the model) — resending also clears the stale ⚠️ from the view.
       const base = messagesRef.current.filter((m) => !(m.role === 'assistant' && m.content.startsWith('⚠️')))
-      const next: UiMessage[] = [...base, { role: 'user', content: trimmed }]
+      const next: UiMessage[] = [...base, { role: 'user', content: trimmed, at: new Date().toISOString() }]
       setMessages(next)
       setStep('Thinking…')
       setSending(true)
