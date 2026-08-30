@@ -44,6 +44,19 @@ export async function getLastSessionActivity(): Promise<string | null> {
   return (data?.updated_at as string | undefined) ?? null
 }
 
+/** One session by id — used to recover the true state after a dropped
+ *  connection, since the server may have finished and saved the turn even
+ *  though the client never got the response (see plan-chat's waitUntil). */
+export async function getSession(id: string): Promise<ChatSession | null> {
+  const { data, error } = await supabase
+    .from('chat_sessions')
+    .select('id, title, date, messages, plan, updated_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data as ChatSession | null) ?? null
+}
+
 export async function createSession(params: {
   title: string
   date: string

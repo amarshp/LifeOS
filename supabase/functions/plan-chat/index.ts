@@ -7,8 +7,17 @@
 // user-scoped client, so RLS applies) before returning a structured turn: a
 // chat `reply`, an optional `plan`, and a list of `actions` it performed.
 //
+// The turn (tool calls + persisting the conversation to chat_sessions) runs
+// inside EdgeRuntime.waitUntil, so backgrounding the app mid-turn — which kills
+// the client's side of the SSE connection — doesn't kill the turn: actions still
+// commit and the reply still gets saved, even though the client never saw it land.
+//
 // Deploy: npx supabase functions deploy plan-chat
 // Secret:  npx supabase secrets set OPENAI_API_KEY=sk-...
+
+// Global provided by the Supabase Edge Runtime at execution time — not part of
+// Deno's own lib, so it needs a local type hint (no runtime effect).
+declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void }
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import {
@@ -44,6 +53,7 @@ interface Body {
   timezone?: string // IANA tz
   expected_sleep_hours?: number // user's nightly sleep target (Settings)
   stream?: boolean // true → Server-Sent Events (live step progress) instead of one JSON blob
+  session_id?: string // existing chat_sessions row to append to; omitted → a new session is created
 }
 
 // CORS: the Expo WEB build (localhost dev / testing) calls from a browser and
@@ -2101,6 +2111,7 @@ Deno.serve(async (req) => {
     return json({ error: 'missing date or messages' }, 400)
   }
   const timezone = body.timezone || 'UTC'
+  const sessionId = body.session_id || null
   const expectedSleepHours =
     typeof body.expected_sleep_hours === 'number' &&
     body.expected_sleep_hours >= 4 &&
@@ -2250,7 +2261,10 @@ Deno.serve(async (req) => {
             /* controller already closed (client aborted) */
           }
         }
-        try {
+        // Registered with waitUntil below so it runs to completion — including
+        // persisting the turn — even if the client's connection dies mid-flight
+        // (app backgrounded) and every send() above starts silently no-op'ing.
+        const work = (async () => {
           const result = await runPlanTurn(
             ctx,
             convo,
@@ -2258,6 +2272,33 @@ Deno.serve(async (req) => {
             (label) => send('step', { label }),
             (chunk) => send('token', { chunk }),
           )
+          const assistantMsg = { role: 'assistant' as const, content: result.reply, actions: result.actions }
+          const finalMessages = [...messages, assistantMsg]
+          let finalSessionId = sessionId
+          try {
+            if (sessionId) {
+              const patch: Record<string, unknown> = { messages: finalMessages, date }
+              if (result.plan !== undefined) patch.plan = result.plan
+              const { error } = await supabase.from('chat_sessions').update(patch).eq('id', sessionId)
+              if (error) console.error('plan-chat: failed to persist turn', error.message)
+            } else {
+              const title = (messages.find((m) => m.role === 'user')?.content ?? 'Chat').slice(0, 80)
+              const { data: inserted, error } = await supabase
+                .from('chat_sessions')
+                .insert({ user_id: userData.user.id, title, date, messages: finalMessages, plan: result.plan ?? null })
+                .select('id')
+                .single()
+              if (error) console.error('plan-chat: failed to create session', error.message)
+              else finalSessionId = inserted.id as string
+            }
+          } catch (persistErr) {
+            console.error('plan-chat: persistence threw', persistErr)
+          }
+          return { ...result, session_id: finalSessionId }
+        })()
+        EdgeRuntime.waitUntil(work)
+        try {
+          const result = await work
           send('done', result)
         } catch (e) {
           const he = e instanceof HttpError ? e : new HttpError(500, e instanceof Error ? e.message : String(e))

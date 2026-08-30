@@ -35,6 +35,7 @@ import {
   transcribe,
   applyChatPlan,
   undoApply,
+  TransientPlanChatError,
   type ApplyUndo,
   type ChatMessage,
   type ChatTurn,
@@ -304,7 +305,7 @@ export default function PlanScreen() {
       const controller = new AbortController()
       abortRef.current = controller
       try {
-        const turn = await sendMessageStream(effectiveDate, next, expectedSleepHours, {
+        const turn = await sendMessageStream(effectiveDate, next, expectedSleepHours, sessionIdRef.current, {
           signal: controller.signal,
           onStep: (label) => setStep(label),
           onToken: (chunk) => {
@@ -316,17 +317,18 @@ export default function PlanScreen() {
             setStreamingText('')
           },
         })
+        sessionIdRef.current = turn.sessionId
         const withReply: UiMessage[] = [...next, { role: 'assistant', content: turn.reply, actions: turn.actions }]
         setMessages(withReply)
         // turn.plan is undefined on a turn that didn't call propose_plan/clear_plan
         // — keep whatever's already on screen instead of clobbering it with null.
-        const resolvedPlan = turn.plan !== undefined ? turn.plan : planRef.current
         if (turn.plan !== undefined) {
           setPlan(turn.plan)
           planSetAtIndexRef.current = turn.plan ? withReply.length - 1 : -1
         }
         setModel(turn.model)
-        persistSession(withReply, resolvedPlan, effectiveDate)
+        // plan-chat persists this turn to chat_sessions itself now (survives the
+        // client disconnecting mid-turn) — no client-side write needed here.
         // Agent changed real data (timers/blocks) → refresh Home/Day views.
         if (turn.actions.length > 0) emitTimerChange()
         scrollToEnd()
@@ -350,6 +352,25 @@ export default function PlanScreen() {
             persistSession(withPartial, planRef.current, effectiveDate)
           }
           return null
+        }
+        // Connection dropped (e.g. app backgrounded) rather than a real failure —
+        // plan-chat keeps running server-side (EdgeRuntime.waitUntil) and saves the
+        // turn itself, so check the DB for the outcome before showing an error.
+        if (e instanceof TransientPlanChatError && sessionIdRef.current) {
+          try {
+            const dbSession = await chatSessionsService.getSession(sessionIdRef.current)
+            if (dbSession && dbSession.messages.length > next.length) {
+              const recovered = dbSession.messages as UiMessage[]
+              setMessages(recovered)
+              setPlan(dbSession.plan)
+              planSetAtIndexRef.current = dbSession.plan ? recovered.length - 1 : -1
+              emitTimerChange()
+              scrollToEnd()
+              return null
+            }
+          } catch {
+            /* reconciliation check itself failed — fall through to the error below */
+          }
         }
         const msg = e instanceof Error ? e.message : 'Something went wrong'
         setMessages((m) => [...m, { role: 'assistant', content: `⚠️ ${msg}` }])

@@ -61,6 +61,9 @@ export interface ChatTurn {
   /** Human-readable log of real data changes the agent made this turn. */
   actions: string[]
   model: string
+  /** The chat_sessions row this turn was persisted to — server-assigned on the
+   *  first turn of a new chat, otherwise echoes back the id that was sent. */
+  sessionId: string | null
 }
 
 function deviceTimezone(): string {
@@ -74,6 +77,15 @@ function deviceTimezone(): string {
 // Transport failures that never reached (or never got a response from) the Edge
 // Function — a plain resend is safe because no server work ran.
 const TRANSPORT_ERR_RE = /failed to (send a request|fetch)|network request failed|load failed|timed out/i
+
+/**
+ * A dropped connection (e.g. the app was backgrounded mid-turn) rather than a
+ * real failure — plan-chat keeps running server-side after a drop (see its
+ * EdgeRuntime.waitUntil comment), so the turn may have completed anyway.
+ * Callers should check chat_sessions for the outcome instead of resending —
+ * resending re-runs the whole turn and can double up actions.
+ */
+export class TransientPlanChatError extends Error {}
 
 interface InvokeFailure {
   message: string
@@ -138,6 +150,7 @@ export async function sendMessage(
         plan: data.plan ?? null,
         actions: Array.isArray(data.actions) ? data.actions : [],
         model: data.model ?? 'unknown',
+        sessionId: data.session_id ?? null,
       }
     }
     const failure = await classifyFailure(error, data)
@@ -176,6 +189,7 @@ export async function sendMessageStream(
   date: string,
   messages: ChatMessage[],
   expectedSleepHours: number | undefined,
+  sessionId: string | null,
   handlers: StreamHandlers = {},
 ): Promise<ChatTurn> {
   const { data: sess } = await supabase.auth.getSession()
@@ -201,6 +215,7 @@ export async function sendMessageStream(
         messages,
         timezone: deviceTimezone(),
         expected_sleep_hours: expectedSleepHours,
+        session_id: sessionId,
         stream: true,
       }),
     }) as unknown as Response
@@ -210,7 +225,8 @@ export async function sendMessageStream(
     // the signal, not the error name.
     if (handlers.signal?.aborted || (e instanceof Error && e.name === 'AbortError')) throw e
     const raw = e instanceof Error ? e.message : String(e ?? 'Request failed')
-    // Transport failure — request never reached the server, so a resend is safe.
+    // Never reached the server — nothing could have been persisted, so this is
+    // a plain "resend is safe" failure, not the TransientPlanChatError case below.
     throw new Error(TRANSPORT_ERR_RE.test(raw) ? 'Connection dropped — try again.' : raw)
   }
 
@@ -238,46 +254,55 @@ export async function sendMessageStream(
   let streamErr: string | null = null
 
   // SSE frames are separated by a blank line; each frame has "event:" / "data:" lines.
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
-      let event = 'message'
-      let data = ''
-      for (const line of frame.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        else if (line.startsWith('data:')) data += line.slice(5).trim()
-      }
-      if (!data) continue
-      let payload: { label?: string; chunk?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string }
-      try {
-        payload = JSON.parse(data)
-      } catch {
-        continue
-      }
-      if (event === 'step') handlers.onStep?.(payload.label ?? '')
-      else if (event === 'token') handlers.onToken?.(payload.chunk ?? '')
-      else if (event === 'reset') handlers.onReset?.()
-      else if (event === 'error') streamErr = payload.error ?? 'plan-chat failed'
-      else if (event === 'done') {
-        result = {
-          reply: payload.reply ?? '',
-          // 'plan' in payload distinguishes "omitted — unchanged" (server sent
-          // no key at all this turn) from an explicit null ("cleared").
-          plan: 'plan' in payload ? (payload.plan ?? null) : undefined,
-          actions: Array.isArray(payload.actions) ? (payload.actions as string[]) : [],
-          model: payload.model ?? 'unknown',
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        let event = 'message'
+        let data = ''
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) data += line.slice(5).trim()
+        }
+        if (!data) continue
+        let payload: { label?: string; chunk?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string; session_id?: string }
+        try {
+          payload = JSON.parse(data)
+        } catch {
+          continue
+        }
+        if (event === 'step') handlers.onStep?.(payload.label ?? '')
+        else if (event === 'token') handlers.onToken?.(payload.chunk ?? '')
+        else if (event === 'reset') handlers.onReset?.()
+        else if (event === 'error') streamErr = payload.error ?? 'plan-chat failed'
+        else if (event === 'done') {
+          result = {
+            reply: payload.reply ?? '',
+            // 'plan' in payload distinguishes "omitted — unchanged" (server sent
+            // no key at all this turn) from an explicit null ("cleared").
+            plan: 'plan' in payload ? (payload.plan ?? null) : undefined,
+            actions: Array.isArray(payload.actions) ? (payload.actions as string[]) : [],
+            model: payload.model ?? 'unknown',
+            sessionId: payload.session_id ?? sessionId,
+          }
         }
       }
     }
+  } catch (e) {
+    // The connection died mid-stream (e.g. app backgrounded) rather than the
+    // request never landing — the server may have finished the turn anyway
+    // (see EdgeRuntime.waitUntil in plan-chat). Never resend from here.
+    if (handlers.signal?.aborted || (e instanceof Error && e.name === 'AbortError')) throw e
+    throw new TransientPlanChatError(e instanceof Error ? e.message : 'Connection dropped mid-response')
   }
 
   if (streamErr) throw new Error(streamErr)
-  if (!result) throw new Error('The planner stopped unexpectedly. Pull to refresh before resending.')
+  if (!result) throw new TransientPlanChatError('The planner stopped unexpectedly — the turn may have finished on the server.')
   return result
 }
 
