@@ -28,6 +28,18 @@ import {
  * cross-midnight handling) only at apply time.
  */
 
+/** Dependency-free id for a new chat_sessions row — generated client-side so
+ *  reconciliation works even if the FIRST message of a new chat is the one
+ *  that drops mid-stream (no expo-crypto/native dep needed: this is just a
+ *  row id under RLS, not a security boundary, so Math.random is fine). */
+export function newSessionId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -64,6 +76,10 @@ export interface ChatTurn {
   /** The chat_sessions row this turn was persisted to — server-assigned on the
    *  first turn of a new chat, otherwise echoes back the id that was sent. */
   sessionId: string | null
+  /** False if the server's own write to chat_sessions failed — the caller
+   *  (which definitely received this response, so it's alive) should fall
+   *  back to persisting client-side rather than silently losing the turn. */
+  persisted: boolean
 }
 
 function deviceTimezone(): string {
@@ -151,6 +167,7 @@ export async function sendMessage(
         actions: Array.isArray(data.actions) ? data.actions : [],
         model: data.model ?? 'unknown',
         sessionId: data.session_id ?? null,
+        persisted: data.persisted !== false,
       }
     }
     const failure = await classifyFailure(error, data)
@@ -270,7 +287,7 @@ export async function sendMessageStream(
           else if (line.startsWith('data:')) data += line.slice(5).trim()
         }
         if (!data) continue
-        let payload: { label?: string; chunk?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string; session_id?: string }
+        let payload: { label?: string; chunk?: string; reply?: string; plan?: ProposedPlan | null; actions?: unknown; model?: string; error?: string; session_id?: string; persisted?: boolean }
         try {
           payload = JSON.parse(data)
         } catch {
@@ -289,6 +306,7 @@ export async function sendMessageStream(
             actions: Array.isArray(payload.actions) ? (payload.actions as string[]) : [],
             model: payload.model ?? 'unknown',
             sessionId: payload.session_id ?? sessionId,
+            persisted: payload.persisted !== false,
           }
         }
       }

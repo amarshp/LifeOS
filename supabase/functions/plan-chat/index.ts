@@ -2274,27 +2274,40 @@ Deno.serve(async (req) => {
           )
           const assistantMsg = { role: 'assistant' as const, content: result.reply, actions: result.actions }
           const finalMessages = [...messages, assistantMsg]
-          let finalSessionId = sessionId
+          // Prefer the client's own id (sent for every chat, including a brand
+          // new one) so a retry after a total connection failure — where the
+          // client never learned whether the first attempt's row exists —
+          // still lands on the SAME row instead of creating a duplicate.
+          const effectiveId = sessionId ?? crypto.randomUUID()
+          let persisted = false
           try {
-            if (sessionId) {
-              const patch: Record<string, unknown> = { messages: finalMessages, date }
-              if (result.plan !== undefined) patch.plan = result.plan
-              const { error } = await supabase.from('chat_sessions').update(patch).eq('id', sessionId)
-              if (error) console.error('plan-chat: failed to persist turn', error.message)
+            const patch: Record<string, unknown> = { messages: finalMessages, date }
+            if (result.plan !== undefined) patch.plan = result.plan
+            // Try update first: covers both an existing conversation and a
+            // retried first message whose earlier attempt already inserted
+            // this id. Only if no row matches do we insert (setting title —
+            // never on the update path, so title stays pinned to turn one).
+            const { data: updated, error: updateErr } = await supabase
+              .from('chat_sessions')
+              .update(patch)
+              .eq('id', effectiveId)
+              .select('id')
+            if (updateErr) {
+              console.error('plan-chat: failed to persist turn', updateErr.message)
+            } else if (updated && updated.length > 0) {
+              persisted = true
             } else {
               const title = (messages.find((m) => m.role === 'user')?.content ?? 'Chat').slice(0, 80)
-              const { data: inserted, error } = await supabase
+              const { error: insertErr } = await supabase
                 .from('chat_sessions')
-                .insert({ user_id: userData.user.id, title, date, messages: finalMessages, plan: result.plan ?? null })
-                .select('id')
-                .single()
-              if (error) console.error('plan-chat: failed to create session', error.message)
-              else finalSessionId = inserted.id as string
+                .insert({ id: effectiveId, user_id: userData.user.id, title, date, messages: finalMessages, plan: result.plan ?? null })
+              if (insertErr) console.error('plan-chat: failed to create session', insertErr.message)
+              else persisted = true
             }
           } catch (persistErr) {
             console.error('plan-chat: persistence threw', persistErr)
           }
-          return { ...result, session_id: finalSessionId }
+          return { ...result, session_id: effectiveId, persisted }
         })()
         EdgeRuntime.waitUntil(work)
         try {

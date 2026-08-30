@@ -35,6 +35,7 @@ import {
   transcribe,
   applyChatPlan,
   undoApply,
+  newSessionId,
   TransientPlanChatError,
   type ApplyUndo,
   type ChatMessage,
@@ -296,6 +297,10 @@ export default function PlanScreen() {
       // confuse the model) — resending also clears the stale ⚠️ from the view.
       const base = messagesRef.current.filter((m) => !(m.role === 'assistant' && m.content.startsWith('⚠️')))
       const next: UiMessage[] = [...base, { role: 'user', content: trimmed, at: new Date().toISOString() }]
+      // Assign the session id up front (not after the server echoes one back)
+      // so even a first-message disconnect can be reconciled against the DB —
+      // otherwise the very first turn of a new chat has nothing to look up.
+      if (!sessionIdRef.current) sessionIdRef.current = newSessionId()
       setMessages(next)
       setStep('Thinking…')
       setSending(true)
@@ -328,7 +333,12 @@ export default function PlanScreen() {
         }
         setModel(turn.model)
         // plan-chat persists this turn to chat_sessions itself now (survives the
-        // client disconnecting mid-turn) — no client-side write needed here.
+        // client disconnecting mid-turn). We're definitely alive here though —
+        // fall back to the client-side write if the server's own save failed
+        // for some unrelated reason, so a turn is never silently lost.
+        if (!turn.persisted) {
+          persistSession(withReply, turn.plan !== undefined ? turn.plan : planRef.current, effectiveDate)
+        }
         // Agent changed real data (timers/blocks) → refresh Home/Day views.
         if (turn.actions.length > 0) emitTimerChange()
         scrollToEnd()
@@ -355,22 +365,39 @@ export default function PlanScreen() {
         }
         // Connection dropped (e.g. app backgrounded) rather than a real failure —
         // plan-chat keeps running server-side (EdgeRuntime.waitUntil) and saves the
-        // turn itself, so check the DB for the outcome before showing an error.
+        // turn itself, so poll the DB for the outcome before showing an error.
+        // Spaced out (not one immediate check) since the server's own save can
+        // still be mid-flight the moment this catch fires.
         if (e instanceof TransientPlanChatError && sessionIdRef.current) {
-          try {
-            const dbSession = await chatSessionsService.getSession(sessionIdRef.current)
-            if (dbSession && dbSession.messages.length > next.length) {
-              const recovered = dbSession.messages as UiMessage[]
-              setMessages(recovered)
-              setPlan(dbSession.plan)
-              planSetAtIndexRef.current = dbSession.plan ? recovered.length - 1 : -1
-              emitTimerChange()
-              scrollToEnd()
-              return null
+          for (const delay of [0, 3000, 6000]) {
+            if (delay) await new Promise((r) => setTimeout(r, delay))
+            try {
+              const dbSession = await chatSessionsService.getSession(sessionIdRef.current)
+              if (dbSession && dbSession.messages.length > next.length) {
+                const recovered = dbSession.messages as UiMessage[]
+                setMessages(recovered)
+                setPlan(dbSession.plan)
+                planSetAtIndexRef.current = dbSession.plan ? recovered.length - 1 : -1
+                emitTimerChange()
+                scrollToEnd()
+                return null
+              }
+            } catch {
+              /* reconciliation check itself failed — try again after the next delay */
             }
-          } catch {
-            /* reconciliation check itself failed — fall through to the error below */
           }
+          // Still not there after ~9s of polling — it may finish later. Don't
+          // invite an immediate resend, which could double up whatever the
+          // server ends up committing once it does land.
+          setMessages((m) => [
+            ...m,
+            {
+              role: 'assistant',
+              content:
+                '⚠️ Lost connection and the reply hasn’t landed yet — it may still be finishing on the server. Give it a minute, then reopen this chat to check before sending anything else.',
+            },
+          ])
+          return null
         }
         const msg = e instanceof Error ? e.message : 'Something went wrong'
         setMessages((m) => [...m, { role: 'assistant', content: `⚠️ ${msg}` }])
